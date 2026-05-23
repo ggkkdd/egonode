@@ -1,0 +1,39 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --charcoal: #121212;
+  --accent-green: #00FF00;
+}
+
+html,
+body {
+  height: 100%;
+  background-color: var(--charcoal);
+  color: #e5e5e5;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+::selection {
+  background: var(--accent-green);
+  color: var(--charcoal);
+}
+
+/* Subtle scanline texture to reinforce the terminal aesthetic */
+.scanlines::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 0px,
+    rgba(0, 0, 0, 0) 2px,
+    rgba(255, 255, 255, 0.015) 3px,
+    rgba(0, 0, 0, 0) 4px
+  );
+  z-index: 5;
+}

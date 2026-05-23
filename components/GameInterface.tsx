@@ -402,6 +402,7 @@ export default function GameInterface() {
           {buttons.map((label, i) => (
             <ActionButton
               key={`${i}-${label}`}
+              index={i + 1}
               label={label}
               disabled={requesting || loading || !!intentAction}
               prefetched={i === 0 && !!getCached(label)}
@@ -431,28 +432,33 @@ function ActionButton({
   onClick,
   disabled,
   prefetched,
+  index,
 }: {
   label: string;
   onClick?: () => void;
   disabled?: boolean;
   prefetched?: boolean;
+  index: number;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="group relative border border-[#00FF00]/60 bg-transparent px-5 py-3 text-left font-mono text-sm uppercase tracking-wider text-neutral-200 transition-all duration-150 hover:border-[#00FF00] hover:bg-[#00FF00]/10 hover:text-[#00FF00] hover:shadow-glow focus:outline-none focus:ring-1 focus:ring-[#00FF00] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-neutral-200 disabled:hover:shadow-none"
+      className="group relative flex items-center gap-3 border-2 border-[#00FF00] bg-[#00FF00]/[0.06] px-4 py-3.5 font-mono text-sm uppercase tracking-wider text-neutral-100 transition-all duration-150 hover:bg-[#00FF00]/20 hover:text-[#00FF00] hover:shadow-glow active:bg-[#00FF00]/30 focus:outline-none focus:ring-2 focus:ring-[#00FF00]/60 focus:ring-offset-2 focus:ring-offset-[#121212] disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-[#00FF00]/[0.06] disabled:hover:text-neutral-100 disabled:hover:shadow-none"
     >
-      <span className="mr-2 text-[#00FF00] opacity-60 transition-opacity group-hover:opacity-100">
-        &gt;
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center border border-[#00FF00] bg-black text-[11px] font-bold text-[#00FF00]">
+        {index}
       </span>
-      {label}
+      <span className="flex-1 text-left">{label}</span>
+      <span className="text-[#00FF00] opacity-50 transition-all duration-150 group-hover:translate-x-1 group-hover:opacity-100">
+        →
+      </span>
       {prefetched && (
         <span
           aria-hidden
-          title="prefetched"
-          className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-[#00FF00] shadow-glow"
+          title="prefetched — instant load"
+          className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-[#00FF00] shadow-glow"
         />
       )}
     </button>

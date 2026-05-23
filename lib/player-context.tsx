@@ -83,18 +83,21 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let mounted = true;
-    const supabase = getSupabase();
+    let subscription: { unsubscribe: () => void } | null = null;
 
     async function init() {
       try {
-        // Reuse an existing session if persisted in localStorage.
+        // getSupabase() can throw synchronously if env vars are missing —
+        // keep it inside the try so the message reaches the sidebar banner
+        // instead of triggering React's generic error overlay.
+        const supabase = getSupabase();
+
         const {
           data: { session },
         } = await supabase.auth.getSession();
 
         let activeUser: User | null = session?.user ?? null;
 
-        // No session yet → spin up a fresh anonymous user.
         if (!activeUser) {
           const { data, error: signInErr } = await supabase.auth.signInAnonymously();
           if (signInErr) throw signInErr;
@@ -104,6 +107,13 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         if (!mounted || !activeUser) return;
         setUser(activeUser);
         await loadPlayerData(activeUser.id);
+
+        const { data: sub } = supabase.auth.onAuthStateChange(
+          (_event, session) => {
+            setUser(session?.user ?? null);
+          }
+        );
+        subscription = sub.subscription;
       } catch (e) {
         if (!mounted) return;
         const msg = e instanceof Error ? e.message : "Failed to initialize session";
@@ -115,13 +125,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
     init();
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-    });
-
     return () => {
       mounted = false;
-      sub.subscription.unsubscribe();
+      subscription?.unsubscribe();
     };
   }, [loadPlayerData]);
 

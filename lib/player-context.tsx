@@ -23,6 +23,7 @@ type PlayerContextValue = {
     description: string,
     isCuriosityKey?: boolean
   ) => Promise<Artifact | null>;
+  updateCognitiveTags: (add: string[], remove: string[]) => Promise<void>;
 };
 
 const PlayerContext = createContext<PlayerContextValue | undefined>(undefined);
@@ -81,6 +82,32 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     [user]
   );
 
+  const updateCognitiveTags = useCallback(
+    async (add: string[], remove: string[]) => {
+      if (!user || !player) return;
+      const next = Array.from(
+        new Set([
+          ...player.cognitive_tags.filter((t) => !remove.includes(t)),
+          ...add,
+        ])
+      );
+      if (
+        next.length === player.cognitive_tags.length &&
+        next.every((t) => player.cognitive_tags.includes(t))
+      ) {
+        return; // no change
+      }
+      const supabase = getSupabase();
+      const { error: updErr } = await supabase
+        .from("players")
+        .update({ cognitive_tags: next })
+        .eq("id", user.id);
+      if (updErr) throw updErr;
+      setPlayer({ ...player, cognitive_tags: next });
+    },
+    [user, player]
+  );
+
   useEffect(() => {
     let mounted = true;
     let subscription: { unsubscribe: () => void } | null = null;
@@ -133,7 +160,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <PlayerContext.Provider
-      value={{ user, player, artifacts, loading, error, refresh, addArtifact }}
+      value={{ user, player, artifacts, loading, error, refresh, addArtifact, updateCognitiveTags }}
     >
       {children}
     </PlayerContext.Provider>

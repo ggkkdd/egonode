@@ -29,18 +29,21 @@ import { getSupabase } from "@/lib/supabase/client";
 import { BanIsland } from "@/components/BanIsland";
 import { IntentModal } from "@/components/IntentModal";
 
-const INITIAL_NARRATIVE = `The corridor exhales. Pale light fractures across the bulkhead, and the hum of the reactor beneath your feet skips a beat — once, twice. Somewhere ahead, a door waits to be named.`;
+const INITIAL_NARRATIVE = `You stand overlooking the valley of Egonode. The castle on the ridge is your clear objective, and the bustling town within the walls waits below.`;
 
-const INITIAL_BUTTONS: [string, string, string] = [
-  "Examine the door",
-  "Listen to the hum",
-  "Retreat into shadow",
-];
+const INITIAL_BUTTONS: string[] = ["Observe"];
 
 export default function GameInterface() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const { player, artifacts, loading, error, addArtifact, refresh } =
-    usePlayer();
+  const {
+    player,
+    artifacts,
+    loading,
+    error,
+    addArtifact,
+    refresh,
+    updateCognitiveTags,
+  } = usePlayer();
 
   const [node, setNode] = useState<GameNode | null>(null);
   const [requesting, setRequesting] = useState(false);
@@ -49,6 +52,9 @@ export default function GameInterface() {
 
   // Custom input state
   const [customInput, setCustomInput] = useState("");
+
+  // Permanent actions unlocked by artifacts (in-session)
+  const [unlockedActions, setUnlockedActions] = useState<string[]>([]);
 
   // Trust-gate state
   const [intentAction, setIntentAction] = useState<string | null>(null);
@@ -71,9 +77,16 @@ export default function GameInterface() {
   }
 
   const narrative = node?.narrative_text ?? INITIAL_NARRATIVE;
-  const buttons: [string, string, string] = node
-    ? [node.button_1, node.button_2, node.button_3]
-    : INITIAL_BUTTONS;
+  const sceneButtons: string[] = node?.buttons ?? INITIAL_BUTTONS;
+  const buttons: string[] = Array.from(new Set([...sceneButtons, ...unlockedActions]));
+  const gridCols =
+    buttons.length === 1
+      ? "sm:grid-cols-1"
+      : buttons.length === 2
+      ? "sm:grid-cols-2"
+      : buttons.length === 3
+      ? "sm:grid-cols-3"
+      : "sm:grid-cols-4";
 
   /* ----------------------------------------------------------------
    * Apply a freshly-loaded node: swap state, swap audio, swap image.
@@ -121,19 +134,31 @@ export default function GameInterface() {
       applyLoaded(loaded);
 
       if (loaded.node.artifact_awarded) {
+        const a = loaded.node.artifact_awarded;
         try {
-          await addArtifact(
-            loaded.node.artifact_awarded.name,
-            loaded.node.artifact_awarded.desc,
-            false
-          );
-          setLastAward(loaded.node.artifact_awarded.name);
+          await addArtifact(a.name, a.desc, false);
+          setLastAward(a.name);
+          if (a.unlocks_action) {
+            setUnlockedActions((prev) =>
+              prev.includes(a.unlocks_action!) ? prev : [...prev, a.unlocks_action!]
+            );
+          }
         } catch (saveErr) {
           const msg =
             saveErr instanceof Error
               ? saveErr.message
               : "Failed to save artifact";
           setNodeError(`Artifact not saved: ${msg}`);
+        }
+      }
+
+      // Apply cognitive tag updates from AI
+      const tagUpdates = loaded.node.cognitive_tag_updates;
+      if (tagUpdates && (tagUpdates.add.length > 0 || tagUpdates.remove.length > 0)) {
+        try {
+          await updateCognitiveTags(tagUpdates.add, tagUpdates.remove);
+        } catch {
+          /* non-fatal — tag drift is recoverable next scene */
         }
       }
     } catch (e) {
@@ -275,13 +300,13 @@ export default function GameInterface() {
   }
 
   /* ----------------------------------------------------------------
-   * Prefetch button_1 in the background whenever the current scene
+   * Prefetch the first available action in the background whenever the scene
    * changes (and on first mount once the player is ready). Fire-and-
    * forget — errors are swallowed so a failed prefetch never surfaces.
    * ---------------------------------------------------------------- */
   useEffect(() => {
     if (!player) return;
-    const target = node?.button_1 ?? INITIAL_BUTTONS[0];
+    const target = node?.buttons?.[0] ?? INITIAL_BUTTONS[0];
     if (getCached(target)) return;
 
     const pending = fetchFullNode({
@@ -463,7 +488,7 @@ export default function GameInterface() {
           )}
         </article>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className={`grid grid-cols-1 gap-3 ${gridCols}`}>
           {buttons.map((label, i) => (
             <ActionButton
               key={`${i}-${label}`}

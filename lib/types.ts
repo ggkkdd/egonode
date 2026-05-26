@@ -16,13 +16,21 @@ export type Artifact = {
   created_at: string;
 };
 
-export type ArtifactAward = { name: string; desc: string };
+export type ArtifactAward = {
+  name: string;
+  desc: string;
+  unlocks_action: string | null;
+};
+
+export type CognitiveTagUpdates = {
+  add: string[];
+  remove: string[];
+};
 
 export type GameNode = {
   narrative_text: string;
   image_prompt: string;
-  button_1: string;
-  button_2: string;
-  button_3: string;
+  buttons: string[];
   artifact_awarded: ArtifactAward | null;
+  cognitive_tag_updates: CognitiveTagUpdates;
 };

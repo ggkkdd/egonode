@@ -12,6 +12,8 @@ import {
   AlertTriangle,
   Sparkles,
   Volume2,
+  VolumeX,
+  SendHorizonal,
 } from "lucide-react";
 import { usePlayer } from "@/lib/player-context";
 import type { Artifact, GameNode } from "@/lib/types";
@@ -41,11 +43,12 @@ export default function GameInterface() {
     usePlayer();
 
   const [node, setNode] = useState<GameNode | null>(null);
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const [imageLoaded, setImageLoaded] = useState(false);
   const [requesting, setRequesting] = useState(false);
   const [nodeError, setNodeError] = useState<string | null>(null);
   const [lastAward, setLastAward] = useState<string | null>(null);
+
+  // Custom input state
+  const [customInput, setCustomInput] = useState("");
 
   // Trust-gate state
   const [intentAction, setIntentAction] = useState<string | null>(null);
@@ -54,6 +57,12 @@ export default function GameInterface() {
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const currentAudioUrlRef = useRef<string | null>(null);
+
+  // Background music
+  const bgMusicRef = useRef<HTMLAudioElement | null>(null);
+  const [bgVolume, setBgVolume] = useState(0.3);
+  const [bgMuted, setBgMuted] = useState(false);
+  const [showVolume, setShowVolume] = useState(false);
 
   // Ban early-return: removes the entire charcoal/green UI and replaces it
   // with the red Ban Island terminal.
@@ -73,8 +82,6 @@ export default function GameInterface() {
    * ---------------------------------------------------------------- */
   function applyLoaded(loaded: LoadedNode) {
     setNode(loaded.node);
-    setImageUrl(loaded.imageUrl);
-    setImageLoaded(false);
 
     if (currentAudioUrlRef.current) {
       URL.revokeObjectURL(currentAudioUrlRef.current);
@@ -83,8 +90,6 @@ export default function GameInterface() {
 
     if (audioRef.current && loaded.audioBlobUrl) {
       audioRef.current.src = loaded.audioBlobUrl;
-      // play() is initiated inside the user-gesture promise chain, so
-      // autoplay policies should permit it. Failures are non-fatal.
       audioRef.current.play().catch(() => {
         /* autoplay blocked — ignore silently */
       });
@@ -291,6 +296,36 @@ export default function GameInterface() {
   }, [node, player]);
 
   /* ----------------------------------------------------------------
+   * Background music — start on first user gesture (browser policy).
+   * ---------------------------------------------------------------- */
+  useEffect(() => {
+    const music = bgMusicRef.current;
+    if (!music) return;
+    music.volume = bgVolume;
+    music.muted = bgMuted;
+
+    function startMusic() {
+      music!.play().catch(() => { /* blocked — ignore */ });
+      document.removeEventListener("click", startMusic);
+      document.removeEventListener("keydown", startMusic);
+    }
+
+    document.addEventListener("click", startMusic, { once: true });
+    document.addEventListener("keydown", startMusic, { once: true });
+
+    return () => {
+      document.removeEventListener("click", startMusic);
+      document.removeEventListener("keydown", startMusic);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!bgMusicRef.current) return;
+    bgMusicRef.current.volume = bgVolume;
+    bgMusicRef.current.muted = bgMuted;
+  }, [bgVolume, bgMuted]);
+
+  /* ----------------------------------------------------------------
    * Unmount cleanup — drop cached blobs and the currently playing one.
    * ---------------------------------------------------------------- */
   useEffect(() => {
@@ -312,26 +347,21 @@ export default function GameInterface() {
         className="absolute inset-0 z-0 bg-[#121212]"
         data-image-prompt={node?.image_prompt ?? ""}
       >
-        {imageUrl && (
-          <img
-            key={imageUrl}
-            src={imageUrl}
-            alt=""
-            onLoad={() => setImageLoaded(true)}
-            className={`h-full w-full object-cover transition-opacity duration-700 ${
-              imageLoaded ? "opacity-60" : "opacity-0"
-            }`}
-          />
-        )}
+        <img
+          src="/bg.jpg"
+          alt=""
+          className="h-full w-full object-cover opacity-60"
+        />
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/50 via-black/20 to-black/80" />
       </div>
 
       <div className="scanlines pointer-events-none absolute inset-0 z-10" />
 
-      {/* Hidden audio element — driven imperatively via ref */}
+      {/* Hidden audio elements */}
       <audio ref={audioRef} className="hidden" preload="auto" />
+      <audio ref={bgMusicRef} src="/bg-music.mp3" loop className="hidden" preload="auto" />
 
-      <header className="absolute left-0 right-0 top-0 z-20 flex items-center justify-between border-b border-[#00FF00]/20 bg-[#121212]/70 px-6 py-3 backdrop-blur-sm">
+      <header className="absolute left-0 right-0 top-0 z-40 flex h-12 items-center justify-between border-b border-[#00FF00]/20 bg-[#121212]/70 px-6 backdrop-blur-sm">
         <div className="flex items-center gap-2 text-[#00FF00]">
           <Terminal className="h-4 w-4" />
           <span className="text-xs uppercase tracking-[0.3em]">egonode</span>
@@ -340,13 +370,48 @@ export default function GameInterface() {
           {(loading || requesting) && (
             <Loader2 className="h-3 w-3 animate-spin text-[#00FF00]" />
           )}
-          {currentAudioUrlRef.current && (
-            <Volume2 className="h-3 w-3 text-[#00FF00]/70" />
-          )}
           <span>node // 0x07-A</span>
           {player && (
             <span className="text-[#00FF00]/70">· {player.username}</span>
           )}
+
+          {/* Volume control */}
+          <div className="relative flex items-center gap-2 z-50">
+            <button
+              type="button"
+              onClick={() => setShowVolume((v) => !v)}
+              className="text-[#00FF00]/60 transition-colors hover:text-[#00FF00]"
+              aria-label="Toggle volume control"
+            >
+              {bgMuted || bgVolume === 0
+                ? <VolumeX className="h-4 w-4" />
+                : <Volume2 className="h-4 w-4" />}
+            </button>
+            {showVolume && (
+              <div className="absolute right-0 top-7 flex items-center gap-3 border border-[#00FF00]/30 bg-[#121212]/95 px-3 py-2 backdrop-blur-sm">
+                <button
+                  type="button"
+                  onClick={() => setBgMuted((m) => !m)}
+                  className="text-[10px] uppercase tracking-widest text-[#00FF00]/60 hover:text-[#00FF00]"
+                >
+                  {bgMuted ? "unmute" : "mute"}
+                </button>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={bgMuted ? 0 : bgVolume}
+                  onChange={(e) => {
+                    const v = parseFloat(e.target.value);
+                    setBgVolume(v);
+                    if (v > 0) setBgMuted(false);
+                  }}
+                  className="h-1 w-24 cursor-pointer accent-[#00FF00]"
+                />
+              </div>
+            )}
+          </div>
         </span>
       </header>
 
@@ -360,8 +425,8 @@ export default function GameInterface() {
       />
 
       <section
-        className={`absolute bottom-0 left-0 z-20 flex flex-col gap-4 p-6 transition-[right] duration-300 ease-out ${
-          sidebarOpen ? "right-80" : "right-12"
+        className={`absolute bottom-0 left-0 top-12 z-20 flex flex-col justify-end gap-4 p-6 transition-[right] duration-300 ease-out ${
+          sidebarOpen ? "right-[calc(20rem+3rem)]" : "right-12"
         }`}
       >
         <article
@@ -404,12 +469,40 @@ export default function GameInterface() {
               key={`${i}-${label}`}
               index={i + 1}
               label={label}
-              disabled={requesting || loading || !!intentAction}
+              disabled={requesting || loading || !!intentAction || !player}
               prefetched={i === 0 && !!getCached(label)}
               onClick={() => handleAction(label)}
             />
           ))}
         </div>
+
+        {/* Custom input */}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const val = customInput.trim();
+            if (!val) return;
+            setCustomInput("");
+            handleAction(val);
+          }}
+          className="flex gap-2"
+        >
+          <input
+            type="text"
+            value={customInput}
+            onChange={(e) => setCustomInput(e.target.value)}
+            disabled={requesting || loading || !!intentAction || !player}
+            placeholder="or type your own action…"
+            className="flex-1 border border-[#00FF00]/30 bg-transparent px-4 py-2.5 font-mono text-sm text-neutral-200 placeholder-neutral-600 outline-none transition-colors focus:border-[#00FF00]/70 focus:ring-0 disabled:cursor-not-allowed disabled:opacity-30"
+          />
+          <button
+            type="submit"
+            disabled={!customInput.trim() || requesting || loading || !!intentAction || !player}
+            className="flex items-center gap-2 border border-[#00FF00] bg-[#00FF00]/[0.06] px-4 py-2.5 font-mono text-sm text-[#00FF00] transition-all hover:bg-[#00FF00]/20 disabled:cursor-not-allowed disabled:opacity-30"
+          >
+            <SendHorizonal className="h-4 w-4" />
+          </button>
+        </form>
       </section>
 
       {intentAction && (
@@ -485,7 +578,7 @@ function Sidebar({
   return (
     <aside
       aria-label="Inventory and tags"
-      className={`absolute right-0 top-0 z-30 flex h-full transition-transform duration-300 ease-out ${
+      className={`absolute bottom-0 right-0 top-12 z-30 flex transition-transform duration-300 ease-out ${
         open ? "translate-x-0" : "translate-x-[calc(100%-3rem)]"
       }`}
     >

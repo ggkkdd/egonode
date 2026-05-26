@@ -11,16 +11,18 @@ const SYSTEM_PROMPT = `${CORE_RULE}
 
 You MUST respond with a single JSON object matching this schema exactly — no markdown, no commentary:
 {
-  "narrative_text": string,   // 2-4 sentences, evocative second-person prose describing the scene that results from the user's action
+  "narrative_text": string,   // exactly 1 sentence, evocative second-person prose, max 15 words
   "image_prompt": string,     // one vivid sentence usable verbatim as an image-generation prompt
-  "button_1": string,         // short action label, max ~6 words
-  "button_2": string,         // short action label, max ~6 words
-  "button_3": string,         // short action label, max ~6 words
+  "button_1": string,         // 1-2 word action label
+  "button_2": string,         // 1-2 word action label
+  "button_3": string,         // 1-2 word action label
   "artifact_awarded": null | { "name": string, "desc": string }
 }
 
 Rules:
 - Tone: minimalist, slightly unsettling, lowercase intimacy.
+- narrative_text must be a single sentence of 15 words or fewer — no exceptions.
+- Button labels must be 1-2 words — verb or noun only (e.g. "follow", "ignore", "descend", "take it").
 - The three buttons must be meaningfully different paths, not rephrasings of one another.
 - Award an artifact only when the scene's outcome genuinely warrants it (~25% of nodes). Otherwise return null.
 - Echo and evolve the player's cognitive_tags through what they encounter; never name the tags out loud.`;

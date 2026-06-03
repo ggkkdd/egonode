@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowRight,
+  Clock,
   Gamepad2,
   Loader2,
   Play,
@@ -29,6 +30,7 @@ import type { GameState, JudgeResult, Scenario } from "@/lib/types";
 type AppView = "GAME" | "RANKING";
 
 const MAX_PLAN = 150;
+const LEVEL_SECONDS = 90; // countdown per level; auto-submits at zero
 
 /**
  * Parse a Response body as JSON without throwing. Server/proxy error pages are
@@ -61,6 +63,7 @@ export default function GameInterface() {
   );
   const [gameState, setGameState] = useState<GameState>("WELCOME");
   const [plan, setPlan] = useState("");
+  const [timeLeft, setTimeLeft] = useState(LEVEL_SECONDS);
   const [result, setResult] = useState<JudgeResult | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -188,6 +191,33 @@ export default function GameInterface() {
   }
 
   /* ----------------------------------------------------------------
+   * Time's up. An empty plan is an instant death (no AI call); anything
+   * the player has typed gets sent to the Judge, which decides whether
+   * it's a real plan or nonsense.
+   * ---------------------------------------------------------------- */
+  function handleTimeUp() {
+    if (gameState !== "PLAYING") return;
+    if (plan.trim()) {
+      void submitPlan();
+      return;
+    }
+    // Froze — empty plan. Perish without bothering the Judge.
+    setGameState("RESULT");
+    setResult({
+      outcome: "PERISHED",
+      narrative:
+        "The clock ran out and you just stood there, plan unwritten and mind blank. The disaster did not wait for you to think of something clever.",
+      image_prompt: `A person frozen in panic, out of time, as ${currentScenario.title} destroys everything around them, cinematic and bleak`,
+    });
+    void recordRun({
+      level: currentLevel,
+      scenarioTitle: currentScenario.title,
+      userPlan: "",
+      outcome: "PERISHED",
+    });
+  }
+
+  /* ----------------------------------------------------------------
    * Background music — start on first user gesture (browser policy).
    * ---------------------------------------------------------------- */
   useEffect(() => {
@@ -216,6 +246,29 @@ export default function GameInterface() {
     bgMusicRef.current.volume = bgVolume;
     bgMusicRef.current.muted = bgMuted;
   }, [bgVolume, bgMuted]);
+
+  /* ----------------------------------------------------------------
+   * Per-level countdown. Reset to 90s whenever a fresh scenario is shown,
+   * tick down only while actively playing the game (paused on the ranking
+   * tab), and fire handleTimeUp() at zero.
+   * ---------------------------------------------------------------- */
+  useEffect(() => {
+    if (gameState === "PLAYING") setTimeLeft(LEVEL_SECONDS);
+  }, [currentScenario, gameState]);
+
+  useEffect(() => {
+    if (appView !== "GAME" || gameState !== "PLAYING") return;
+    const id = setInterval(() => {
+      setTimeLeft((t) => Math.max(0, t - 1));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [appView, gameState]);
+
+  useEffect(() => {
+    if (appView === "GAME" && gameState === "PLAYING" && timeLeft === 0) {
+      handleTimeUp();
+    }
+  }, [timeLeft, gameState, appView]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const survived = result?.outcome === "SURVIVED";
   const showResult = gameState === "RESULT" && result;
@@ -358,6 +411,7 @@ export default function GameInterface() {
                 onPlanChange={setPlan}
                 onSubmit={submitPlan}
                 error={error}
+                timeLeft={timeLeft}
               />
             )}
 
@@ -487,6 +541,7 @@ function PlayingView({
   onPlanChange,
   onSubmit,
   error,
+  timeLeft,
 }: {
   level: number;
   scenario: Scenario;
@@ -494,23 +549,45 @@ function PlayingView({
   onPlanChange: (v: string) => void;
   onSubmit: () => void;
   error: string | null;
+  timeLeft: number;
 }) {
   const remaining = plan.trim().length === 0;
 
+  const urgent = timeLeft <= 10;
+  const warning = timeLeft > 10 && timeLeft <= 30;
+  const timeColor = urgent
+    ? "text-red-500"
+    : warning
+    ? "text-amber-400"
+    : "text-[#00FF00]";
+  const barColor = urgent ? "bg-red-500" : warning ? "bg-amber-400" : "bg-[#00FF00]";
+  const mm = Math.floor(timeLeft / 60);
+  const ss = (timeLeft % 60).toString().padStart(2, "0");
+
   return (
     <div className="animate-fade-up flex flex-col gap-6">
-      {/* Level indicator + progress */}
+      {/* Level indicator + countdown */}
       <div className="flex flex-col gap-2">
-        <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.35em] text-[#00FF00]">
-          <span>
+        <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.35em]">
+          <span className="text-[#00FF00]">
             Level {level} / {MAX_LEVEL}
           </span>
-          <span className="text-neutral-500">{LEVEL_THEMES[level]}</span>
+          <span className="hidden text-neutral-500 sm:inline">
+            {LEVEL_THEMES[level]}
+          </span>
+          <span
+            className={`flex items-center gap-1.5 tabular-nums ${timeColor} ${
+              urgent ? "animate-pulse" : ""
+            }`}
+          >
+            <Clock className="h-3.5 w-3.5" />
+            {mm}:{ss}
+          </span>
         </div>
-        <div className="h-1 w-full overflow-hidden bg-[#00FF00]/10">
+        <div className="h-1 w-full overflow-hidden bg-white/5">
           <div
-            className="h-full bg-[#00FF00] shadow-glow transition-all duration-500"
-            style={{ width: `${(level / MAX_LEVEL) * 100}%` }}
+            className={`h-full ${barColor} transition-[width] duration-1000 ease-linear`}
+            style={{ width: `${(timeLeft / LEVEL_SECONDS) * 100}%` }}
           />
         </div>
       </div>

@@ -1,5 +1,5 @@
 -- =====================================================================
--- EGO-NODE — "Death by AI" survival game — Supabase schema
+-- Armaged.online — "Death by AI" survival game — Supabase schema
 -- =====================================================================
 -- Run this entire file once, top-to-bottom, in the Supabase SQL Editor.
 -- It is idempotent and safe to re-run, and it upgrades an existing

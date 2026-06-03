@@ -1,5 +1,5 @@
 // =====================================================================
-// EGO-NODE — "Death by AI" survival game
+// Armaged.online — "Death by AI" survival game
 // =====================================================================
 
 /** A single Armageddon scenario the player must survive. */

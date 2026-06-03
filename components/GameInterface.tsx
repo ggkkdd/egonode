@@ -224,7 +224,7 @@ export default function GameInterface() {
       <header className="absolute left-0 right-0 top-0 z-40 flex h-12 items-center justify-between border-b border-[#00FF00]/20 bg-[#121212]/70 px-6 backdrop-blur-sm">
         <div className="flex items-center gap-2 text-[#00FF00]">
           <Terminal className="h-4 w-4" />
-          <span className="text-xs uppercase tracking-[0.3em]">ego-node</span>
+          <span className="text-xs uppercase tracking-[0.3em]">armaged.online</span>
           <span className="hidden text-[10px] uppercase tracking-[0.25em] text-neutral-500 sm:inline">
             // death by ai
           </span>

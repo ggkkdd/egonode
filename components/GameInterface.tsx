@@ -49,6 +49,11 @@ async function readJson<T>(res: Response): Promise<T | null> {
 
 const NAME_STORAGE_KEY = "armaged_name";
 
+/** A unique-enough default handle like "Guest47193" so the name is never empty. */
+function generateGuestName(): string {
+  return `Guest${Math.floor(10000 + Math.random() * 90000)}`;
+}
+
 export default function GameInterface() {
   const { maxLevelReached, error: saveError, recordRun, saveUsername } =
     usePlayer();
@@ -82,20 +87,23 @@ export default function GameInterface() {
    * ---------------------------------------------------------------- */
   useEffect(() => {
     setCurrentScenario(randomScenario(1));
+    let saved: string | null = null;
     try {
-      const saved = window.localStorage.getItem(NAME_STORAGE_KEY);
-      if (saved) setPlayerName(saved);
+      saved = window.localStorage.getItem(NAME_STORAGE_KEY);
     } catch {
-      /* localStorage blocked — no pre-fill, no problem */
+      /* localStorage blocked — fall through to a fresh guest name */
     }
+    // Always land on a non-empty name so the Begin button is never disabled.
+    setPlayerName(saved || generateGuestName());
   }, []);
 
   /* ----------------------------------------------------------------
    * Begin: lock in the player's name and drop them into level 1.
    * ---------------------------------------------------------------- */
   function beginGame() {
-    const name = playerName.trim();
-    if (!name) return;
+    // If the player cleared the field, fall back to a fresh guest name rather
+    // than blocking — the Begin button is never disabled.
+    const name = playerName.trim() || generateGuestName();
     setPlayerName(name);
     try {
       window.localStorage.setItem(NAME_STORAGE_KEY, name);
@@ -457,8 +465,6 @@ function WelcomeView({
   record: number;
   onRanking: () => void;
 }) {
-  const canBegin = name.trim().length > 0;
-
   return (
     <form
       onSubmit={(e) => {
@@ -497,13 +503,12 @@ function WelcomeView({
           maxLength={24}
           autoFocus
           onChange={(e) => onNameChange(e.target.value)}
-          placeholder="anonymous"
+          placeholder="Guest12345"
           className="border border-[#00FF00]/30 bg-transparent px-4 py-3 text-center font-mono text-base text-neutral-100 placeholder-neutral-600 outline-none transition-colors focus:border-[#00FF00]/70"
         />
         <button
           type="submit"
-          disabled={!canBegin}
-          className="group mt-1 flex items-center justify-center gap-3 border-2 border-[#00FF00] bg-[#00FF00]/[0.06] px-6 py-4 font-mono text-sm uppercase tracking-[0.25em] text-[#00FF00] transition-all duration-150 hover:bg-[#00FF00]/20 hover:shadow-glow active:bg-[#00FF00]/30 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-[#00FF00]/[0.06] disabled:hover:shadow-none"
+          className="group mt-1 flex items-center justify-center gap-3 border-2 border-[#00FF00] bg-[#00FF00]/[0.06] px-6 py-4 font-mono text-sm uppercase tracking-[0.25em] text-[#00FF00] transition-all duration-150 hover:bg-[#00FF00]/20 hover:shadow-glow active:bg-[#00FF00]/30"
         >
           <Play className="h-4 w-4" />
           Begin

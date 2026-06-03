@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowRight,
+  Gamepad2,
   Loader2,
   Play,
   RotateCcw,
@@ -11,6 +12,7 @@ import {
   ShieldCheck,
   Swords,
   Terminal,
+  Trophy,
   Volume2,
   VolumeX,
 } from "lucide-react";
@@ -21,7 +23,10 @@ import {
   randomScenario,
   scenariosForLevel,
 } from "@/lib/scenarios";
+import { fetchLeaderboard, type LeaderboardEntry } from "@/lib/leaderboard";
 import type { GameState, JudgeResult, Scenario } from "@/lib/types";
+
+type AppView = "GAME" | "RANKING";
 
 const MAX_PLAN = 150;
 
@@ -46,6 +51,7 @@ export default function GameInterface() {
   const { maxLevelReached, error: saveError, recordRun, saveUsername } =
     usePlayer();
 
+  const [appView, setAppView] = useState<AppView>("GAME");
   const [playerName, setPlayerName] = useState("");
   const [currentLevel, setCurrentLevel] = useState(1);
   // Seed deterministically (first level-1 scenario) so the server and client
@@ -212,6 +218,8 @@ export default function GameInterface() {
 
   const survived = result?.outcome === "SURVIVED";
   const showResult = gameState === "RESULT" && result;
+  // Only paint the verdict background while actually viewing the game.
+  const showVerdictBg = appView === "GAME" && !!showResult;
 
   return (
     <main className="relative flex h-screen w-screen items-center justify-center overflow-hidden bg-[#121212] text-neutral-200">
@@ -222,11 +230,11 @@ export default function GameInterface() {
           src="/bg.jpg"
           alt=""
           className={`h-full w-full object-cover transition-opacity duration-700 ${
-            showResult ? "opacity-0" : "opacity-20"
+            showVerdictBg ? "opacity-0" : "opacity-20"
           }`}
         />
         {/* Verdict image fades in over the top on RESULT */}
-        {showResult && imageUrl && (
+        {showVerdictBg && imageUrl && (
           <img
             src={imageUrl}
             alt=""
@@ -236,7 +244,7 @@ export default function GameInterface() {
         {/* Outcome-tinted vignette */}
         <div
           className={`pointer-events-none absolute inset-0 transition-colors duration-700 ${
-            showResult
+            showVerdictBg
               ? survived
                 ? "bg-gradient-to-b from-[#00FF00]/10 via-black/60 to-black/90"
                 : "bg-gradient-to-b from-red-700/15 via-black/65 to-black/95"
@@ -254,10 +262,25 @@ export default function GameInterface() {
         <div className="flex items-center gap-2 text-[#00FF00]">
           <Terminal className="h-4 w-4" />
           <span className="text-xs uppercase tracking-[0.3em]">armaged.online</span>
-          <span className="hidden text-[10px] uppercase tracking-[0.25em] text-neutral-500 sm:inline">
+          <span className="hidden text-[10px] uppercase tracking-[0.25em] text-neutral-500 md:inline">
             // death by ai
           </span>
         </div>
+
+        <nav className="flex items-center gap-1">
+          <TabButton
+            active={appView === "GAME"}
+            onClick={() => setAppView("GAME")}
+            icon={<Gamepad2 className="h-3.5 w-3.5" />}
+            label="Play"
+          />
+          <TabButton
+            active={appView === "RANKING"}
+            onClick={() => setAppView("RANKING")}
+            icon={<Trophy className="h-3.5 w-3.5" />}
+            label="Ranking"
+          />
+        </nav>
 
         <div className="flex items-center gap-4 text-[10px] uppercase tracking-[0.25em] text-neutral-500">
           {playerName && gameState !== "WELCOME" && (
@@ -309,41 +332,51 @@ export default function GameInterface() {
 
       {/* Center stage ----------------------------------------------------- */}
       <section className="relative z-20 w-full max-w-2xl px-6 py-16">
-        {gameState === "WELCOME" && (
-          <WelcomeView
-            name={playerName}
-            onNameChange={setPlayerName}
-            onBegin={beginGame}
-            record={maxLevelReached}
+        {appView === "RANKING" ? (
+          <LeaderboardView
+            currentName={playerName}
+            onPlay={() => setAppView("GAME")}
           />
-        )}
+        ) : (
+          <>
+            {gameState === "WELCOME" && (
+              <WelcomeView
+                name={playerName}
+                onNameChange={setPlayerName}
+                onBegin={beginGame}
+                record={maxLevelReached}
+                onRanking={() => setAppView("RANKING")}
+              />
+            )}
 
-        {gameState === "PLAYING" && (
-          <PlayingView
-            level={currentLevel}
-            scenario={currentScenario}
-            plan={plan}
-            onPlanChange={setPlan}
-            onSubmit={submitPlan}
-            error={error}
-          />
-        )}
+            {gameState === "PLAYING" && (
+              <PlayingView
+                level={currentLevel}
+                scenario={currentScenario}
+                plan={plan}
+                onPlanChange={setPlan}
+                onSubmit={submitPlan}
+                error={error}
+              />
+            )}
 
-        {gameState === "JUDGING" && <JudgingView />}
+            {gameState === "JUDGING" && <JudgingView />}
 
-        {showResult && (
-          <ResultView
-            survived={survived}
-            level={currentLevel}
-            narrative={result.narrative}
-            onNext={() => goToLevel(currentLevel + 1)}
-            onRestart={() => goToLevel(1)}
-          />
+            {showResult && (
+              <ResultView
+                survived={survived}
+                level={currentLevel}
+                narrative={result.narrative}
+                onNext={() => goToLevel(currentLevel + 1)}
+                onRestart={() => goToLevel(1)}
+              />
+            )}
+          </>
         )}
       </section>
 
       {/* Soft, non-blocking save error */}
-      {saveError && gameState === "PLAYING" && (
+      {saveError && appView === "GAME" && gameState === "PLAYING" && (
         <p className="absolute bottom-3 left-0 right-0 z-30 text-center text-[10px] uppercase tracking-[0.2em] text-neutral-600">
           offline mode — progress not saved
         </p>
@@ -361,11 +394,13 @@ function WelcomeView({
   onNameChange,
   onBegin,
   record,
+  onRanking,
 }: {
   name: string;
   onNameChange: (v: string) => void;
   onBegin: () => void;
   record: number;
+  onRanking: () => void;
 }) {
   const canBegin = name.trim().length > 0;
 
@@ -421,11 +456,21 @@ function WelcomeView({
         </button>
       </div>
 
-      {record > 0 && (
-        <p className="text-[11px] uppercase tracking-[0.3em] text-neutral-600">
-          your record · level {record} / {MAX_LEVEL}
-        </p>
-      )}
+      <div className="flex flex-col items-center gap-3">
+        {record > 0 && (
+          <p className="text-[11px] uppercase tracking-[0.3em] text-neutral-600">
+            your record · level {record} / {MAX_LEVEL}
+          </p>
+        )}
+        <button
+          type="button"
+          onClick={onRanking}
+          className="flex items-center gap-2 text-[11px] uppercase tracking-[0.3em] text-neutral-500 transition-colors hover:text-[#00FF00]"
+        >
+          <Trophy className="h-3.5 w-3.5" />
+          View ranking
+        </button>
+      </div>
     </form>
   );
 }
@@ -634,6 +679,178 @@ function ResultView({
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ================================================================== */
+/* Header tab                                                         */
+/* ================================================================== */
+
+function TabButton({
+  active,
+  onClick,
+  icon,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ReactNode;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`flex items-center gap-1.5 border px-2.5 py-1 text-[10px] uppercase tracking-[0.25em] transition-colors sm:px-3 ${
+        active
+          ? "border-[#00FF00]/50 bg-[#00FF00]/10 text-[#00FF00]"
+          : "border-transparent text-neutral-500 hover:text-[#00FF00]/80"
+      }`}
+    >
+      {icon}
+      <span className="hidden sm:inline">{label}</span>
+    </button>
+  );
+}
+
+/* ================================================================== */
+/* RANKING                                                           */
+/* ================================================================== */
+
+function rankColor(index: number): string {
+  if (index === 0) return "#FFD700"; // gold
+  if (index === 1) return "#C0C0C0"; // silver
+  if (index === 2) return "#CD7F32"; // bronze
+  return "#737373"; // neutral-500
+}
+
+function LeaderboardView({
+  currentName,
+  onPlay,
+}: {
+  currentName: string;
+  onPlay: () => void;
+}) {
+  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    setStatus("loading");
+    setErrorMsg(null);
+    fetchLeaderboard()
+      .then((rows) => {
+        if (!active) return;
+        setEntries(rows);
+        setStatus("ready");
+      })
+      .catch((e) => {
+        if (!active) return;
+        setErrorMsg(e instanceof Error ? e.message : "Failed to load ranking");
+        setStatus("error");
+      });
+    return () => {
+      active = false;
+    };
+  }, [reloadKey]);
+
+  const me = currentName.trim().toLowerCase();
+
+  return (
+    <div className="animate-fade-up flex flex-col gap-6">
+      <div className="flex items-end justify-between">
+        <div className="flex items-center gap-3 text-[#00FF00]">
+          <Trophy className="h-6 w-6" />
+          <h1 className="text-2xl font-black uppercase tracking-[0.2em] sm:text-3xl">
+            Ranking
+          </h1>
+        </div>
+        <span className="text-[10px] uppercase tracking-[0.3em] text-neutral-500">
+          highest level reached
+        </span>
+      </div>
+
+      <div className="border border-[#00FF00]/40 bg-[#121212]/80 shadow-glow backdrop-blur-md">
+        {status === "loading" && (
+          <div className="flex items-center justify-center gap-3 px-5 py-12 text-xs uppercase tracking-[0.3em] text-neutral-500">
+            <Loader2 className="h-4 w-4 animate-spin text-[#00FF00]" />
+            loading survivors…
+          </div>
+        )}
+
+        {status === "error" && (
+          <div className="flex flex-col items-center gap-4 px-5 py-12 text-center">
+            <AlertTriangle className="h-6 w-6 text-red-400" />
+            <p className="max-w-sm text-xs leading-relaxed text-neutral-400">
+              Ranking unavailable. Make sure the database is connected and the
+              schema (including the <span className="text-[#00FF00]">leaderboard</span>{" "}
+              view) has been applied.
+            </p>
+            <p className="break-words text-[10px] text-neutral-600">{errorMsg}</p>
+            <button
+              type="button"
+              onClick={() => setReloadKey((k) => k + 1)}
+              className="border border-[#00FF00]/40 px-4 py-2 text-[10px] uppercase tracking-[0.25em] text-[#00FF00] transition-colors hover:bg-[#00FF00]/10"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {status === "ready" && entries.length === 0 && (
+          <p className="px-5 py-12 text-center text-xs uppercase tracking-[0.3em] text-neutral-500">
+            no survivors ranked yet — be the first
+          </p>
+        )}
+
+        {status === "ready" && entries.length > 0 && (
+          <ul className="max-h-[58vh] divide-y divide-[#00FF00]/10 overflow-y-auto">
+            {entries.map((e, i) => {
+              const isMe = !!me && e.username.trim().toLowerCase() === me;
+              return (
+                <li
+                  key={`${e.username}-${i}`}
+                  className={`flex items-center gap-4 px-5 py-3 ${
+                    isMe ? "bg-[#00FF00]/10" : ""
+                  }`}
+                >
+                  <span
+                    className="w-7 shrink-0 text-right font-mono text-sm font-bold"
+                    style={{ color: rankColor(i) }}
+                  >
+                    {i + 1}
+                  </span>
+                  <span className="flex-1 truncate font-mono text-sm text-neutral-100">
+                    {e.username}
+                    {isMe && (
+                      <span className="ml-2 text-[10px] uppercase tracking-widest text-[#00FF00]">
+                        you
+                      </span>
+                    )}
+                  </span>
+                  <span className="shrink-0 text-[11px] uppercase tracking-[0.2em] text-[#00FF00]">
+                    lvl {e.max_level_reached}
+                    <span className="text-neutral-600"> / {MAX_LEVEL}</span>
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+
+      <button
+        type="button"
+        onClick={onPlay}
+        className="group flex items-center justify-center gap-3 self-start border border-[#00FF00]/40 px-5 py-2.5 font-mono text-xs uppercase tracking-[0.25em] text-[#00FF00] transition-colors hover:bg-[#00FF00]/10"
+      >
+        <Gamepad2 className="h-4 w-4" />
+        Back to game
+      </button>
     </div>
   );
 }

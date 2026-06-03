@@ -92,3 +92,18 @@ create policy "runs_select_own" on public.runs
 drop policy if exists "runs_insert_own" on public.runs;
 create policy "runs_insert_own" on public.runs
   for insert with check (auth.uid() = player_id);
+
+-- ---------------------------------------------------------------------
+-- Public leaderboard
+-- ---------------------------------------------------------------------
+-- Players can only SELECT their own row (policy above), but the ranking
+-- needs everyone's name + best level. This view exposes ONLY those two
+-- non-sensitive columns. It runs with the owner's rights (the default,
+-- i.e. NOT security_invoker), so it bypasses the per-row RLS on players
+-- while still leaking nothing else — no ids, no run plans.
+create or replace view public.leaderboard as
+  select username, max_level_reached
+  from public.players
+  where max_level_reached > 0;
+
+grant select on public.leaderboard to anon, authenticated;

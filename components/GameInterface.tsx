@@ -128,7 +128,7 @@ export default function GameInterface() {
     setImageUrl(null);
     setGameState("JUDGING");
 
-    const scenarioPrompt = `Level ${currentLevel} of ${MAX_LEVEL} (difficulty escalates each level — by level ${MAX_LEVEL} survival is nearly impossible). Threat: "${currentScenario.title}". ${currentScenario.description}`;
+    const scenarioPrompt = `${currentScenario.title}: ${currentScenario.description}`;
 
     try {
       const res = await fetch("/api/judge", {
@@ -137,6 +137,7 @@ export default function GameInterface() {
         body: JSON.stringify({
           scenario: scenarioPrompt,
           userPlan: trimmed.slice(0, MAX_PLAN),
+          level: currentLevel,
         }),
       });
 

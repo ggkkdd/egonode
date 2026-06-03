@@ -25,6 +25,8 @@ type PlayerContextValue = {
    * failure is swallowed so the game keeps running without a database.
    */
   recordRun: (run: RunLog) => Promise<void>;
+  /** Save the player's chosen display name to `players.username`. Best-effort. */
+  saveUsername: (name: string) => Promise<void>;
 };
 
 const PlayerContext = createContext<PlayerContextValue | undefined>(undefined);
@@ -135,8 +137,29 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     [maxLevelReached]
   );
 
+  const saveUsername = useCallback(async (name: string) => {
+    const user = userRef.current;
+    const trimmed = name.trim();
+    if (!user || !trimmed) return; // No Supabase / empty name — skip silently.
+
+    try {
+      const supabase = getSupabase();
+      const { error: updErr } = await supabase
+        .from("players")
+        .update({ username: trimmed })
+        .eq("id", user.id);
+      if (updErr) throw updErr;
+      setPlayer((prev) => (prev ? { ...prev, username: trimmed } : prev));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to save name";
+      setError(msg);
+    }
+  }, []);
+
   return (
-    <PlayerContext.Provider value={{ maxLevelReached, ready, error, recordRun }}>
+    <PlayerContext.Provider
+      value={{ maxLevelReached, ready, error, recordRun, saveUsername }}
+    >
       {children}
     </PlayerContext.Provider>
   );

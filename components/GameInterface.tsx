@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   ArrowRight,
   Loader2,
+  Play,
   RotateCcw,
   Skull,
   ShieldCheck,
@@ -39,16 +40,20 @@ async function readJson<T>(res: Response): Promise<T | null> {
   }
 }
 
-export default function GameInterface() {
-  const { maxLevelReached, error: saveError, recordRun } = usePlayer();
+const NAME_STORAGE_KEY = "armaged_name";
 
+export default function GameInterface() {
+  const { maxLevelReached, error: saveError, recordRun, saveUsername } =
+    usePlayer();
+
+  const [playerName, setPlayerName] = useState("");
   const [currentLevel, setCurrentLevel] = useState(1);
   // Seed deterministically (first level-1 scenario) so the server and client
   // render the same HTML; we randomize on the client after mount below.
   const [currentScenario, setCurrentScenario] = useState<Scenario>(
     () => scenariosForLevel(1)[0]
   );
-  const [gameState, setGameState] = useState<GameState>("PLAYING");
+  const [gameState, setGameState] = useState<GameState>("WELCOME");
   const [plan, setPlan] = useState("");
   const [result, setResult] = useState<JudgeResult | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -63,10 +68,34 @@ export default function GameInterface() {
   /* ----------------------------------------------------------------
    * Pick a random opening scenario — client-only, after hydration, so the
    * Math.random() pick never differs from the server-rendered HTML.
+   * Also pre-fill the name from a previous visit (localStorage is
+   * client-only, so reading it here avoids any hydration mismatch).
    * ---------------------------------------------------------------- */
   useEffect(() => {
     setCurrentScenario(randomScenario(1));
+    try {
+      const saved = window.localStorage.getItem(NAME_STORAGE_KEY);
+      if (saved) setPlayerName(saved);
+    } catch {
+      /* localStorage blocked — no pre-fill, no problem */
+    }
   }, []);
+
+  /* ----------------------------------------------------------------
+   * Begin: lock in the player's name and drop them into level 1.
+   * ---------------------------------------------------------------- */
+  function beginGame() {
+    const name = playerName.trim();
+    if (!name) return;
+    setPlayerName(name);
+    try {
+      window.localStorage.setItem(NAME_STORAGE_KEY, name);
+    } catch {
+      /* non-fatal — name just won't be remembered next visit */
+    }
+    void saveUsername(name); // best-effort Supabase persist
+    goToLevel(1);
+  }
 
   /* ----------------------------------------------------------------
    * Move to a level: pick a fresh scenario and reset the round.
@@ -231,6 +260,9 @@ export default function GameInterface() {
         </div>
 
         <div className="flex items-center gap-4 text-[10px] uppercase tracking-[0.25em] text-neutral-500">
+          {playerName && gameState !== "WELCOME" && (
+            <span className="text-[#00FF00]/70">· {playerName}</span>
+          )}
           {maxLevelReached > 0 && (
             <span className="text-[#00FF00]/70">record · lvl {maxLevelReached}</span>
           )}
@@ -277,6 +309,15 @@ export default function GameInterface() {
 
       {/* Center stage ----------------------------------------------------- */}
       <section className="relative z-20 w-full max-w-2xl px-6 py-16">
+        {gameState === "WELCOME" && (
+          <WelcomeView
+            name={playerName}
+            onNameChange={setPlayerName}
+            onBegin={beginGame}
+            record={maxLevelReached}
+          />
+        )}
+
         {gameState === "PLAYING" && (
           <PlayingView
             level={currentLevel}
@@ -308,6 +349,84 @@ export default function GameInterface() {
         </p>
       )}
     </main>
+  );
+}
+
+/* ================================================================== */
+/* WELCOME                                                           */
+/* ================================================================== */
+
+function WelcomeView({
+  name,
+  onNameChange,
+  onBegin,
+  record,
+}: {
+  name: string;
+  onNameChange: (v: string) => void;
+  onBegin: () => void;
+  record: number;
+}) {
+  const canBegin = name.trim().length > 0;
+
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        onBegin();
+      }}
+      className="animate-fade-up flex flex-col items-center gap-10 text-center"
+    >
+      {/* Title block */}
+      <div className="flex flex-col items-center gap-4">
+        <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.5em] text-[#00FF00]">
+          <Skull className="h-4 w-4" />
+          death by ai
+        </div>
+        <h1 className="text-5xl font-black uppercase leading-none tracking-tight text-neutral-50 sm:text-7xl">
+          Armaged<span className="text-[#00FF00]">.online</span>
+        </h1>
+        <p className="max-w-md text-sm leading-relaxed text-neutral-400 sm:text-base">
+          Ten levels of Armageddon, each one built to kill you. Type a survival
+          plan in {MAX_PLAN} characters or less and let the AI Judge decide
+          whether you live or die.
+        </p>
+      </div>
+
+      {/* Name entry */}
+      <div className="flex w-full max-w-sm flex-col gap-3">
+        <label
+          htmlFor="player-name"
+          className="text-[11px] uppercase tracking-[0.35em] text-neutral-400"
+        >
+          Enter your name, survivor
+        </label>
+        <input
+          id="player-name"
+          value={name}
+          maxLength={24}
+          autoFocus
+          onChange={(e) => onNameChange(e.target.value)}
+          placeholder="anonymous"
+          className="border border-[#00FF00]/30 bg-transparent px-4 py-3 text-center font-mono text-base text-neutral-100 placeholder-neutral-600 outline-none transition-colors focus:border-[#00FF00]/70"
+        />
+        <button
+          type="submit"
+          disabled={!canBegin}
+          className="group mt-1 flex items-center justify-center gap-3 border-2 border-[#00FF00] bg-[#00FF00]/[0.06] px-6 py-4 font-mono text-sm uppercase tracking-[0.25em] text-[#00FF00] transition-all duration-150 hover:bg-[#00FF00]/20 hover:shadow-glow active:bg-[#00FF00]/30 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-[#00FF00]/[0.06] disabled:hover:shadow-none"
+        >
+          <Play className="h-4 w-4" />
+          Begin
+          <ArrowRight className="h-4 w-4 transition-transform duration-150 group-hover:translate-x-1" />
+        </button>
+      </div>
+
+      {record > 0 && (
+        <p className="text-[11px] uppercase tracking-[0.3em] text-neutral-600">
+          your record · level {record} / {MAX_LEVEL}
+        </p>
+      )}
+    </form>
   );
 }
 

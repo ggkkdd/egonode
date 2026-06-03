@@ -22,7 +22,7 @@ export type JudgeResult = {
 };
 
 /** Where the player is in the loop. */
-export type GameState = "PLAYING" | "JUDGING" | "RESULT";
+export type GameState = "WELCOME" | "PLAYING" | "JUDGING" | "RESULT";
 
 /** Persisted player profile (Supabase `players` row). */
 export type Player = {

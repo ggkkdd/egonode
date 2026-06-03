@@ -2,323 +2,154 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  ChevronRight,
-  ChevronLeft,
-  Package,
-  Tag,
-  Terminal,
-  Key,
-  Loader2,
   AlertTriangle,
-  Sparkles,
+  ArrowRight,
+  Loader2,
+  RotateCcw,
+  Skull,
+  ShieldCheck,
+  Swords,
+  Terminal,
   Volume2,
   VolumeX,
-  SendHorizonal,
 } from "lucide-react";
 import { usePlayer } from "@/lib/player-context";
-import type { Artifact, GameNode } from "@/lib/types";
 import {
-  evictAll,
-  fetchFullNode,
-  getCached,
-  type LoadedNode,
-  setCached,
-  takeCached,
-} from "@/lib/media-cache";
-import { getSupabase } from "@/lib/supabase/client";
-import { BanIsland } from "@/components/BanIsland";
-import { IntentModal } from "@/components/IntentModal";
+  LEVEL_THEMES,
+  MAX_LEVEL,
+  randomScenario,
+  scenariosForLevel,
+} from "@/lib/scenarios";
+import type { GameState, JudgeResult, Scenario } from "@/lib/types";
 
-const INITIAL_NARRATIVE = `You stand overlooking the valley of Egonode. The castle on the ridge is your clear objective, and the bustling town within the walls waits below.`;
+const MAX_PLAN = 150;
 
-const INITIAL_BUTTONS: string[] = ["Observe"];
+/**
+ * Parse a Response body as JSON without throwing. Server/proxy error pages are
+ * HTML ("<!DOCTYPE …"), and res.json() on those throws an opaque
+ * "Unexpected token '<'". Returns null instead so callers can react cleanly.
+ */
+async function readJson<T>(res: Response): Promise<T | null> {
+  const text = await res.text().catch(() => "");
+  if (!text) return null;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return null;
+  }
+}
 
 export default function GameInterface() {
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const {
-    player,
-    artifacts,
-    loading,
-    error,
-    addArtifact,
-    refresh,
-    updateCognitiveTags,
-  } = usePlayer();
+  const { maxLevelReached, error: saveError, recordRun } = usePlayer();
 
-  const [node, setNode] = useState<GameNode | null>(null);
-  const [requesting, setRequesting] = useState(false);
-  const [nodeError, setNodeError] = useState<string | null>(null);
-  const [lastAward, setLastAward] = useState<string | null>(null);
+  const [currentLevel, setCurrentLevel] = useState(1);
+  // Seed deterministically (first level-1 scenario) so the server and client
+  // render the same HTML; we randomize on the client after mount below.
+  const [currentScenario, setCurrentScenario] = useState<Scenario>(
+    () => scenariosForLevel(1)[0]
+  );
+  const [gameState, setGameState] = useState<GameState>("PLAYING");
+  const [plan, setPlan] = useState("");
+  const [result, setResult] = useState<JudgeResult | null>(null);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  // Custom input state
-  const [customInput, setCustomInput] = useState("");
-
-  // Permanent actions unlocked by artifacts (in-session)
-  const [unlockedActions, setUnlockedActions] = useState<string[]>([]);
-
-  // Trust-gate state
-  const [intentAction, setIntentAction] = useState<string | null>(null);
-  const [intentPending, setIntentPending] = useState(false);
-  const [intentError, setIntentError] = useState<string | null>(null);
-
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const currentAudioUrlRef = useRef<string | null>(null);
-
-  // Background music
+  // Background music (ambiance) ----------------------------------------
   const bgMusicRef = useRef<HTMLAudioElement | null>(null);
   const [bgVolume, setBgVolume] = useState(0.3);
   const [bgMuted, setBgMuted] = useState(false);
   const [showVolume, setShowVolume] = useState(false);
 
-  // Ban early-return: removes the entire charcoal/green UI and replaces it
-  // with the red Ban Island terminal.
-  if (player?.is_banned) {
-    return <BanIsland />;
-  }
-
-  const narrative = node?.narrative_text ?? INITIAL_NARRATIVE;
-  const sceneButtons: string[] = node?.buttons ?? INITIAL_BUTTONS;
-  const buttons: string[] = Array.from(new Set([...sceneButtons, ...unlockedActions]));
-  const gridCols =
-    buttons.length === 1
-      ? "sm:grid-cols-1"
-      : buttons.length === 2
-      ? "sm:grid-cols-2"
-      : buttons.length === 3
-      ? "sm:grid-cols-3"
-      : "sm:grid-cols-4";
-
   /* ----------------------------------------------------------------
-   * Apply a freshly-loaded node: swap state, swap audio, swap image.
-   * Revokes the previously playing audio blob URL (the new owner is now
-   * this component, not the cache).
-   * ---------------------------------------------------------------- */
-  function applyLoaded(loaded: LoadedNode) {
-    setNode(loaded.node);
-
-    if (currentAudioUrlRef.current) {
-      URL.revokeObjectURL(currentAudioUrlRef.current);
-    }
-    currentAudioUrlRef.current = loaded.audioBlobUrl;
-
-    if (audioRef.current && loaded.audioBlobUrl) {
-      audioRef.current.src = loaded.audioBlobUrl;
-      audioRef.current.play().catch(() => {
-        /* autoplay blocked — ignore silently */
-      });
-    }
-  }
-
-  /* ----------------------------------------------------------------
-   * Use a cached or fresh node to advance the scene.
-   * ---------------------------------------------------------------- */
-  async function proceedWithAction(action: string) {
-    if (!player) return;
-    setRequesting(true);
-    try {
-      let pending = getCached(action);
-      if (!pending) {
-        pending = fetchFullNode({
-          action,
-          current_theme: player.current_theme,
-          cognitive_tags: player.cognitive_tags,
-        });
-        setCached(action, pending);
-      }
-
-      const loaded = await pending;
-
-      takeCached(action);
-      evictAll();
-
-      applyLoaded(loaded);
-
-      if (loaded.node.artifact_awarded) {
-        const a = loaded.node.artifact_awarded;
-        try {
-          await addArtifact(a.name, a.desc, false);
-          setLastAward(a.name);
-          if (a.unlocks_action) {
-            setUnlockedActions((prev) =>
-              prev.includes(a.unlocks_action!) ? prev : [...prev, a.unlocks_action!]
-            );
-          }
-        } catch (saveErr) {
-          const msg =
-            saveErr instanceof Error
-              ? saveErr.message
-              : "Failed to save artifact";
-          setNodeError(`Artifact not saved: ${msg}`);
-        }
-      }
-
-      // Apply cognitive tag updates from AI
-      const tagUpdates = loaded.node.cognitive_tag_updates;
-      if (tagUpdates && (tagUpdates.add.length > 0 || tagUpdates.remove.length > 0)) {
-        try {
-          await updateCognitiveTags(tagUpdates.add, tagUpdates.remove);
-        } catch {
-          /* non-fatal — tag drift is recoverable next scene */
-        }
-      }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Transmission failed";
-      setNodeError(msg);
-    } finally {
-      setRequesting(false);
-    }
-  }
-
-  /* ----------------------------------------------------------------
-   * Click handler — every action passes through the trust gate first.
-   * Borderline actions defer to the IntentModal flow below.
-   * ---------------------------------------------------------------- */
-  async function handleAction(action: string) {
-    if (requesting || intentAction || !player) return;
-    setNodeError(null);
-    setLastAward(null);
-    setRequesting(true);
-
-    try {
-      const classifyRes = await fetch("/api/trust-gate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "classify", action }),
-      });
-      const classifyJson = (await classifyRes.json()) as {
-        requires_intent_check?: boolean;
-        error?: string;
-      };
-      if (!classifyRes.ok) {
-        throw new Error(classifyJson.error ?? "trust-gate classify failed");
-      }
-
-      if (classifyJson.requires_intent_check) {
-        // Pause narration, open the intent modal, and wait for the user.
-        audioRef.current?.pause();
-        setIntentAction(action);
-        setIntentPending(false);
-        setIntentError(null);
-        setRequesting(false);
-        return;
-      }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Trust gate failed";
-      setNodeError(msg);
-      setRequesting(false);
-      return;
-    }
-
-    await proceedWithAction(action);
-  }
-
-  /* ----------------------------------------------------------------
-   * Intent modal — submit the user's justification to the judge.
-   * Malicious  → server flips is_banned; we refresh and let the
-   *              early-return swap in <BanIsland />.
-   * Benign     → award a Curiosity Artifact, then proceed normally.
-   * ---------------------------------------------------------------- */
-  async function handleIntentSubmit(justification: string) {
-    if (!intentAction || !player) return;
-    setIntentPending(true);
-    setIntentError(null);
-
-    try {
-      const supabase = getSupabase();
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const token = session?.access_token;
-
-      const res = await fetch("/api/trust-gate", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          mode: "judge",
-          action: intentAction,
-          justification,
-        }),
-      });
-      const json = (await res.json()) as {
-        malicious?: boolean;
-        reason?: string;
-        error?: string;
-      };
-      if (!res.ok) {
-        throw new Error(json.error ?? "intent judgment failed");
-      }
-
-      if (json.malicious) {
-        // Ban was written server-side. Pull the new player row; the early
-        // return at the top of render will swap to <BanIsland />.
-        await refresh();
-        return;
-      }
-
-      // Benign: award the Curiosity Artifact, then advance the scene.
-      const action = intentAction;
-      try {
-        const awarded = await addArtifact(
-          "Curiosity Token",
-          `Granted for transparent intent: "${action.slice(0, 80)}"`,
-          true
-        );
-        setLastAward(awarded?.name ?? "Curiosity Token");
-      } catch (artifactErr) {
-        // Non-fatal — proceed with the scene even if the artifact insert
-        // fails (sidebar will still re-sync on next refresh).
-        const msg =
-          artifactErr instanceof Error
-            ? artifactErr.message
-            : "artifact write failed";
-        setNodeError(`Curiosity artifact not saved: ${msg}`);
-      }
-
-      setIntentAction(null);
-      setIntentPending(false);
-      await proceedWithAction(action);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Intent judgment failed";
-      setIntentError(msg);
-      setIntentPending(false);
-    }
-  }
-
-  function handleIntentAbandon() {
-    // Resume narration if any was playing when the modal opened.
-    if (audioRef.current?.src) {
-      audioRef.current.play().catch(() => {
-        /* ignored */
-      });
-    }
-    setIntentAction(null);
-    setIntentPending(false);
-    setIntentError(null);
-  }
-
-  /* ----------------------------------------------------------------
-   * Prefetch the first available action in the background whenever the scene
-   * changes (and on first mount once the player is ready). Fire-and-
-   * forget — errors are swallowed so a failed prefetch never surfaces.
+   * Pick a random opening scenario — client-only, after hydration, so the
+   * Math.random() pick never differs from the server-rendered HTML.
    * ---------------------------------------------------------------- */
   useEffect(() => {
-    if (!player) return;
-    const target = node?.buttons?.[0] ?? INITIAL_BUTTONS[0];
-    if (getCached(target)) return;
+    setCurrentScenario(randomScenario(1));
+  }, []);
 
-    const pending = fetchFullNode({
-      action: target,
-      current_theme: player.current_theme,
-      cognitive_tags: player.cognitive_tags,
-    });
-    pending.catch(() => {
-      /* prefetch failures are silent */
-    });
-    setCached(target, pending);
-  }, [node, player]);
+  /* ----------------------------------------------------------------
+   * Move to a level: pick a fresh scenario and reset the round.
+   * ---------------------------------------------------------------- */
+  function goToLevel(level: number) {
+    const clamped = Math.min(Math.max(level, 1), MAX_LEVEL);
+    setCurrentLevel(clamped);
+    setCurrentScenario(randomScenario(clamped));
+    setPlan("");
+    setResult(null);
+    setImageUrl(null);
+    setError(null);
+    setGameState("PLAYING");
+  }
+
+  /* ----------------------------------------------------------------
+   * Submit the plan to the AI Judge.
+   * ---------------------------------------------------------------- */
+  async function submitPlan() {
+    const trimmed = plan.trim();
+    if (!trimmed || gameState === "JUDGING") return;
+
+    setError(null);
+    setImageUrl(null);
+    setGameState("JUDGING");
+
+    const scenarioPrompt = `Level ${currentLevel} of ${MAX_LEVEL} (difficulty escalates each level — by level ${MAX_LEVEL} survival is nearly impossible). Threat: "${currentScenario.title}". ${currentScenario.description}`;
+
+    try {
+      const res = await fetch("/api/judge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scenario: scenarioPrompt,
+          userPlan: trimmed.slice(0, MAX_PLAN),
+        }),
+      });
+
+      // Read the body defensively — an error page (HTML) is not JSON, and
+      // calling res.json() on it throws a cryptic "Unexpected token '<'".
+      const json = await readJson<JudgeResult & { error?: string }>(res);
+      if (!res.ok || !json) {
+        throw new Error(
+          json?.error ??
+            `The Judge is unreachable (HTTP ${res.status}). ` +
+              `If this persists, restart the dev server.`
+        );
+      }
+
+      setResult(json);
+      setGameState("RESULT");
+
+      // Persist analytics (best-effort, never blocks the UI).
+      void recordRun({
+        level: currentLevel,
+        scenarioTitle: currentScenario.title,
+        userPlan: trimmed,
+        outcome: json.outcome,
+      });
+
+      // Generate a background image for the verdict (best-effort).
+      void fetchVerdictImage(json.image_prompt);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Judgment failed";
+      setError(msg);
+      setGameState("PLAYING");
+    }
+  }
+
+  async function fetchVerdictImage(prompt: string) {
+    try {
+      const r = await fetch("/api/generate-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+      if (!r.ok) return; // Fal.ai not connected / failed — dark background it is.
+      const data = await readJson<{ image_url?: unknown }>(r);
+      if (data && typeof data.image_url === "string") setImageUrl(data.image_url);
+    } catch {
+      /* best-effort — silent */
+    }
+  }
 
   /* ----------------------------------------------------------------
    * Background music — start on first user gesture (browser policy).
@@ -329,18 +160,18 @@ export default function GameInterface() {
     music.volume = bgVolume;
     music.muted = bgMuted;
 
-    function startMusic() {
-      music!.play().catch(() => { /* blocked — ignore */ });
-      document.removeEventListener("click", startMusic);
-      document.removeEventListener("keydown", startMusic);
+    function start() {
+      music!.play().catch(() => {
+        /* blocked — ignore */
+      });
+      document.removeEventListener("click", start);
+      document.removeEventListener("keydown", start);
     }
-
-    document.addEventListener("click", startMusic, { once: true });
-    document.addEventListener("keydown", startMusic, { once: true });
-
+    document.addEventListener("click", start, { once: true });
+    document.addEventListener("keydown", start, { once: true });
     return () => {
-      document.removeEventListener("click", startMusic);
-      document.removeEventListener("keydown", startMusic);
+      document.removeEventListener("click", start);
+      document.removeEventListener("keydown", start);
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -350,67 +181,71 @@ export default function GameInterface() {
     bgMusicRef.current.muted = bgMuted;
   }, [bgVolume, bgMuted]);
 
-  /* ----------------------------------------------------------------
-   * Unmount cleanup — drop cached blobs and the currently playing one.
-   * ---------------------------------------------------------------- */
-  useEffect(() => {
-    return () => {
-      evictAll();
-      if (currentAudioUrlRef.current) {
-        URL.revokeObjectURL(currentAudioUrlRef.current);
-        currentAudioUrlRef.current = null;
-      }
-    };
-  }, []);
+  const survived = result?.outcome === "SURVIVED";
+  const showResult = gameState === "RESULT" && result;
 
   return (
-    <main className="relative h-screen w-screen overflow-hidden bg-[#121212] text-neutral-200">
-      {/* 1. Full-screen background — fal.ai image fades in over charcoal */}
-      <div
-        id="scene-background"
-        aria-hidden
-        className="absolute inset-0 z-0 bg-[#121212]"
-        data-image-prompt={node?.image_prompt ?? ""}
-      >
+    <main className="relative flex h-screen w-screen items-center justify-center overflow-hidden bg-[#121212] text-neutral-200">
+      {/* Background layers ------------------------------------------------ */}
+      <div aria-hidden className="absolute inset-0 z-0 bg-[#121212]">
+        {/* Faint ambient base, always present */}
         <img
           src="/bg.jpg"
           alt=""
-          className="h-full w-full object-cover opacity-60"
+          className={`h-full w-full object-cover transition-opacity duration-700 ${
+            showResult ? "opacity-0" : "opacity-20"
+          }`}
         />
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/50 via-black/20 to-black/80" />
+        {/* Verdict image fades in over the top on RESULT */}
+        {showResult && imageUrl && (
+          <img
+            src={imageUrl}
+            alt=""
+            className="absolute inset-0 h-full w-full animate-fade-up object-cover opacity-50"
+          />
+        )}
+        {/* Outcome-tinted vignette */}
+        <div
+          className={`pointer-events-none absolute inset-0 transition-colors duration-700 ${
+            showResult
+              ? survived
+                ? "bg-gradient-to-b from-[#00FF00]/10 via-black/60 to-black/90"
+                : "bg-gradient-to-b from-red-700/15 via-black/65 to-black/95"
+              : "bg-gradient-to-b from-black/40 via-black/30 to-black/80"
+          }`}
+        />
       </div>
 
       <div className="scanlines pointer-events-none absolute inset-0 z-10" />
 
-      {/* Hidden audio elements */}
-      <audio ref={audioRef} className="hidden" preload="auto" />
       <audio ref={bgMusicRef} src="/bg-music.mp3" loop className="hidden" preload="auto" />
 
+      {/* Header ----------------------------------------------------------- */}
       <header className="absolute left-0 right-0 top-0 z-40 flex h-12 items-center justify-between border-b border-[#00FF00]/20 bg-[#121212]/70 px-6 backdrop-blur-sm">
         <div className="flex items-center gap-2 text-[#00FF00]">
           <Terminal className="h-4 w-4" />
-          <span className="text-xs uppercase tracking-[0.3em]">egonode</span>
+          <span className="text-xs uppercase tracking-[0.3em]">ego-node</span>
+          <span className="hidden text-[10px] uppercase tracking-[0.25em] text-neutral-500 sm:inline">
+            // death by ai
+          </span>
         </div>
-        <span className="flex items-center gap-3 text-[10px] uppercase tracking-[0.25em] text-neutral-500">
-          {(loading || requesting) && (
-            <Loader2 className="h-3 w-3 animate-spin text-[#00FF00]" />
-          )}
-          <span>node // 0x07-A</span>
-          {player && (
-            <span className="text-[#00FF00]/70">· {player.username}</span>
-          )}
 
-          {/* Volume control */}
-          <div className="relative flex items-center gap-2 z-50">
+        <div className="flex items-center gap-4 text-[10px] uppercase tracking-[0.25em] text-neutral-500">
+          {maxLevelReached > 0 && (
+            <span className="text-[#00FF00]/70">record · lvl {maxLevelReached}</span>
+          )}
+          <div className="relative flex items-center gap-2">
             <button
               type="button"
               onClick={() => setShowVolume((v) => !v)}
               className="text-[#00FF00]/60 transition-colors hover:text-[#00FF00]"
               aria-label="Toggle volume control"
             >
-              {bgMuted || bgVolume === 0
-                ? <VolumeX className="h-4 w-4" />
-                : <Volume2 className="h-4 w-4" />}
+              {bgMuted || bgVolume === 0 ? (
+                <VolumeX className="h-4 w-4" />
+              ) : (
+                <Volume2 className="h-4 w-4" />
+              )}
             </button>
             {showVolume && (
               <div className="absolute right-0 top-7 flex items-center gap-3 border border-[#00FF00]/30 bg-[#121212]/95 px-3 py-2 backdrop-blur-sm">
@@ -437,285 +272,249 @@ export default function GameInterface() {
               </div>
             )}
           </div>
-        </span>
+        </div>
       </header>
 
-      <Sidebar
-        open={sidebarOpen}
-        onToggle={() => setSidebarOpen((v) => !v)}
-        tags={player?.cognitive_tags ?? []}
-        artifacts={artifacts}
-        loading={loading}
-        error={error}
-      />
-
-      <section
-        className={`absolute bottom-0 left-0 top-12 z-20 flex flex-col justify-end gap-4 p-6 transition-[right] duration-300 ease-out ${
-          sidebarOpen ? "right-[calc(20rem+3rem)]" : "right-12"
-        }`}
-      >
-        <article
-          aria-label="Node narrative"
-          className="border border-[#00FF00]/40 bg-[#121212]/80 p-6 shadow-glow backdrop-blur-md"
-        >
-          <div className="mb-3 flex items-center gap-2 text-[10px] uppercase tracking-[0.35em] text-[#00FF00]">
-            <span className="inline-block h-1.5 w-1.5 animate-pulse bg-[#00FF00]" />
-            narrative
-          </div>
-          <p
-            className={`font-mono text-[15px] leading-relaxed text-neutral-100 transition-opacity duration-200 ${
-              requesting ? "opacity-50" : "opacity-100"
-            }`}
-          >
-            {narrative}
-          </p>
-          {node?.image_prompt && (
-            <p className="mt-3 truncate font-mono text-[10px] uppercase tracking-[0.2em] text-neutral-600">
-              // scene: {node.image_prompt}
-            </p>
-          )}
-          {lastAward && (
-            <div className="mt-3 inline-flex items-center gap-2 border border-[#00FF00]/60 bg-[#00FF00]/10 px-3 py-1.5 text-[11px] uppercase tracking-[0.25em] text-[#00FF00]">
-              <Sparkles className="h-3 w-3" />
-              acquired: {lastAward}
-            </div>
-          )}
-          {nodeError && (
-            <div className="mt-3 flex items-start gap-2 border border-red-500/50 bg-red-950/30 px-3 py-2 text-xs text-red-300">
-              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              <span className="break-words">{nodeError}</span>
-            </div>
-          )}
-        </article>
-
-        <div className={`grid grid-cols-1 gap-3 ${gridCols}`}>
-          {buttons.map((label, i) => (
-            <ActionButton
-              key={`${i}-${label}`}
-              index={i + 1}
-              label={label}
-              disabled={requesting || loading || !!intentAction || !player}
-              prefetched={i === 0 && !!getCached(label)}
-              onClick={() => handleAction(label)}
-            />
-          ))}
-        </div>
-
-        {/* Custom input */}
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            const val = customInput.trim();
-            if (!val) return;
-            setCustomInput("");
-            handleAction(val);
-          }}
-          className="flex gap-2"
-        >
-          <input
-            type="text"
-            value={customInput}
-            onChange={(e) => setCustomInput(e.target.value)}
-            disabled={requesting || loading || !!intentAction || !player}
-            placeholder="or type your own action…"
-            className="flex-1 border border-[#00FF00]/30 bg-transparent px-4 py-2.5 font-mono text-sm text-neutral-200 placeholder-neutral-600 outline-none transition-colors focus:border-[#00FF00]/70 focus:ring-0 disabled:cursor-not-allowed disabled:opacity-30"
+      {/* Center stage ----------------------------------------------------- */}
+      <section className="relative z-20 w-full max-w-2xl px-6 py-16">
+        {gameState === "PLAYING" && (
+          <PlayingView
+            level={currentLevel}
+            scenario={currentScenario}
+            plan={plan}
+            onPlanChange={setPlan}
+            onSubmit={submitPlan}
+            error={error}
           />
-          <button
-            type="submit"
-            disabled={!customInput.trim() || requesting || loading || !!intentAction || !player}
-            className="flex items-center gap-2 border border-[#00FF00] bg-[#00FF00]/[0.06] px-4 py-2.5 font-mono text-sm text-[#00FF00] transition-all hover:bg-[#00FF00]/20 disabled:cursor-not-allowed disabled:opacity-30"
-          >
-            <SendHorizonal className="h-4 w-4" />
-          </button>
-        </form>
+        )}
+
+        {gameState === "JUDGING" && <JudgingView />}
+
+        {showResult && (
+          <ResultView
+            survived={survived}
+            level={currentLevel}
+            narrative={result.narrative}
+            onNext={() => goToLevel(currentLevel + 1)}
+            onRestart={() => goToLevel(1)}
+          />
+        )}
       </section>
 
-      {intentAction && (
-        <IntentModal
-          action={intentAction}
-          pending={intentPending}
-          error={intentError}
-          onAbandon={handleIntentAbandon}
-          onSubmit={handleIntentSubmit}
-        />
+      {/* Soft, non-blocking save error */}
+      {saveError && gameState === "PLAYING" && (
+        <p className="absolute bottom-3 left-0 right-0 z-30 text-center text-[10px] uppercase tracking-[0.2em] text-neutral-600">
+          offline mode — progress not saved
+        </p>
       )}
     </main>
   );
 }
 
-/* ------------------------------------------------------------------ */
+/* ================================================================== */
+/* PLAYING                                                            */
+/* ================================================================== */
 
-function ActionButton({
-  label,
-  onClick,
-  disabled,
-  prefetched,
-  index,
-}: {
-  label: string;
-  onClick?: () => void;
-  disabled?: boolean;
-  prefetched?: boolean;
-  index: number;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className="group relative flex items-center gap-3 border-2 border-[#00FF00] bg-[#00FF00]/[0.06] px-4 py-3.5 font-mono text-sm uppercase tracking-wider text-neutral-100 transition-all duration-150 hover:bg-[#00FF00]/20 hover:text-[#00FF00] hover:shadow-glow active:bg-[#00FF00]/30 focus:outline-none focus:ring-2 focus:ring-[#00FF00]/60 focus:ring-offset-2 focus:ring-offset-[#121212] disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-[#00FF00]/[0.06] disabled:hover:text-neutral-100 disabled:hover:shadow-none"
-    >
-      <span className="flex h-6 w-6 shrink-0 items-center justify-center border border-[#00FF00] bg-black text-[11px] font-bold text-[#00FF00]">
-        {index}
-      </span>
-      <span className="flex-1 text-left">{label}</span>
-      <span className="text-[#00FF00] opacity-50 transition-all duration-150 group-hover:translate-x-1 group-hover:opacity-100">
-        →
-      </span>
-      {prefetched && (
-        <span
-          aria-hidden
-          title="prefetched — instant load"
-          className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-[#00FF00] shadow-glow"
-        />
-      )}
-    </button>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-
-function Sidebar({
-  open,
-  onToggle,
-  tags,
-  artifacts,
-  loading,
+function PlayingView({
+  level,
+  scenario,
+  plan,
+  onPlanChange,
+  onSubmit,
   error,
 }: {
-  open: boolean;
-  onToggle: () => void;
-  tags: string[];
-  artifacts: Artifact[];
-  loading: boolean;
+  level: number;
+  scenario: Scenario;
+  plan: string;
+  onPlanChange: (v: string) => void;
+  onSubmit: () => void;
   error: string | null;
 }) {
+  const remaining = plan.trim().length === 0;
+
   return (
-    <aside
-      aria-label="Inventory and tags"
-      className={`absolute bottom-0 right-0 top-12 z-30 flex transition-transform duration-300 ease-out ${
-        open ? "translate-x-0" : "translate-x-[calc(100%-3rem)]"
-      }`}
-    >
+    <div className="animate-fade-up flex flex-col gap-6">
+      {/* Level indicator + progress */}
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.35em] text-[#00FF00]">
+          <span>
+            Level {level} / {MAX_LEVEL}
+          </span>
+          <span className="text-neutral-500">{LEVEL_THEMES[level]}</span>
+        </div>
+        <div className="h-1 w-full overflow-hidden bg-[#00FF00]/10">
+          <div
+            className="h-full bg-[#00FF00] shadow-glow transition-all duration-500"
+            style={{ width: `${(level / MAX_LEVEL) * 100}%` }}
+          />
+        </div>
+      </div>
+
+      {/* Scenario card */}
+      <article className="border border-[#00FF00]/40 bg-[#121212]/80 p-6 shadow-glow backdrop-blur-md sm:p-8">
+        <h1 className="text-3xl font-bold leading-tight text-neutral-50 sm:text-4xl">
+          {scenario.title}
+        </h1>
+        <p className="mt-4 text-base leading-relaxed text-neutral-300 sm:text-lg">
+          {scenario.description}
+        </p>
+      </article>
+
+      {/* Plan input */}
+      <div className="flex flex-col gap-2">
+        <label
+          htmlFor="plan"
+          className="text-[11px] uppercase tracking-[0.35em] text-neutral-400"
+        >
+          Your survival plan
+        </label>
+        <textarea
+          id="plan"
+          value={plan}
+          maxLength={MAX_PLAN}
+          onChange={(e) => onPlanChange(e.target.value)}
+          onKeyDown={(e) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === "Enter") onSubmit();
+          }}
+          rows={3}
+          autoFocus
+          placeholder="Describe exactly what you do to survive…"
+          className="resize-none border border-[#00FF00]/30 bg-transparent px-4 py-3 font-mono text-sm text-neutral-100 placeholder-neutral-600 outline-none transition-colors focus:border-[#00FF00]/70"
+        />
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] text-neutral-600">
+            ⌘/Ctrl + Enter to submit
+          </span>
+          <span
+            className={`font-mono text-xs ${
+              plan.length >= MAX_PLAN ? "text-red-400" : "text-neutral-500"
+            }`}
+          >
+            {plan.length} / {MAX_PLAN}
+          </span>
+        </div>
+      </div>
+
+      {error && (
+        <div className="flex items-start gap-2 border border-red-500/50 bg-red-950/30 px-3 py-2 text-xs text-red-300">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span className="break-words">{error}</span>
+        </div>
+      )}
+
       <button
         type="button"
-        onClick={onToggle}
-        aria-label={open ? "Collapse sidebar" : "Expand sidebar"}
-        className="flex h-full w-12 flex-col items-center justify-center gap-3 border-l border-[#00FF00]/40 bg-[#121212]/90 text-[#00FF00] transition-colors hover:bg-[#00FF00]/10"
+        onClick={onSubmit}
+        disabled={remaining}
+        className="group flex items-center justify-center gap-3 border-2 border-[#00FF00] bg-[#00FF00]/[0.06] px-6 py-4 font-mono text-sm uppercase tracking-[0.25em] text-[#00FF00] transition-all duration-150 hover:bg-[#00FF00]/20 hover:shadow-glow active:bg-[#00FF00]/30 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-[#00FF00]/[0.06] disabled:hover:shadow-none"
       >
-        {open ? (
-          <ChevronRight className="h-5 w-5" />
-        ) : (
-          <ChevronLeft className="h-5 w-5" />
-        )}
-        <span className="rotate-180 text-[10px] uppercase tracking-[0.3em] [writing-mode:vertical-rl]">
-          inventory
-        </span>
+        <Swords className="h-4 w-4" />
+        Submit Plan
+        <ArrowRight className="h-4 w-4 transition-transform duration-150 group-hover:translate-x-1" />
       </button>
+    </div>
+  );
+}
 
-      <div className="flex h-full w-80 flex-col gap-6 overflow-y-auto border-l border-[#00FF00]/30 bg-[#121212]/90 p-5 backdrop-blur-md">
-        {error && (
-          <div className="flex items-start gap-2 border border-red-500/50 bg-red-950/30 p-3 text-xs text-red-300">
-            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            <span className="break-words">{error}</span>
-          </div>
+/* ================================================================== */
+/* JUDGING                                                            */
+/* ================================================================== */
+
+function JudgingView() {
+  return (
+    <div className="flex flex-col items-center gap-6 py-10 text-center">
+      <Loader2 className="h-12 w-12 animate-spin text-[#00FF00]" />
+      <div className="flex flex-col gap-2">
+        <p className="text-lg font-bold uppercase tracking-[0.3em] text-neutral-100">
+          The AI is judging your fate
+        </p>
+        <p className="animate-pulse text-xs uppercase tracking-[0.3em] text-neutral-500">
+          weighing logic · physics · sheer audacity
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/* ================================================================== */
+/* RESULT                                                             */
+/* ================================================================== */
+
+function ResultView({
+  survived,
+  level,
+  narrative,
+  onNext,
+  onRestart,
+}: {
+  survived: boolean;
+  level: number;
+  narrative: string;
+  onNext: () => void;
+  onRestart: () => void;
+}) {
+  const hasNext = survived && level < MAX_LEVEL;
+  const beatTheGame = survived && level >= MAX_LEVEL;
+
+  return (
+    <div className="flex flex-col items-center gap-8 text-center">
+      {/* Verdict stamp */}
+      <div
+        className={`animate-stamp inline-flex items-center gap-3 border-4 px-6 py-3 ${
+          survived
+            ? "border-[#00FF00] text-[#00FF00] shadow-glow"
+            : "border-red-500 text-red-500"
+        }`}
+      >
+        {survived ? (
+          <ShieldCheck className="h-8 w-8 sm:h-10 sm:w-10" />
+        ) : (
+          <Skull className="h-8 w-8 sm:h-10 sm:w-10" />
+        )}
+        <span className="text-4xl font-black uppercase tracking-[0.2em] sm:text-5xl">
+          {survived ? "Survived" : "Perished"}
+        </span>
+      </div>
+
+      {/* Narrative */}
+      <p className="animate-fade-up max-w-xl text-base leading-relaxed text-neutral-200 sm:text-lg">
+        {narrative}
+      </p>
+
+      {beatTheGame && (
+        <p className="animate-fade-up text-sm uppercase tracking-[0.35em] text-[#00FF00]">
+          You outlasted the end of the universe. Legendary.
+        </p>
+      )}
+
+      {/* Actions */}
+      <div className="animate-fade-up flex w-full max-w-sm flex-col gap-3">
+        {hasNext && (
+          <button
+            type="button"
+            onClick={onNext}
+            className="group flex items-center justify-center gap-3 border-2 border-[#00FF00] bg-[#00FF00]/[0.06] px-6 py-4 font-mono text-sm uppercase tracking-[0.25em] text-[#00FF00] transition-all duration-150 hover:bg-[#00FF00]/20 hover:shadow-glow active:bg-[#00FF00]/30"
+          >
+            Next Level
+            <ArrowRight className="h-4 w-4 transition-transform duration-150 group-hover:translate-x-1" />
+          </button>
         )}
 
-        <SidebarSection
-          icon={<Tag className="h-3.5 w-3.5" />}
-          title="Cognitive Tags"
-        >
-          {loading ? (
-            <SkeletonRow />
-          ) : tags.length === 0 ? (
-            <p className="py-1 text-xs italic text-neutral-500">no tags yet</p>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {tags.map((tag) => (
-                <span
-                  key={tag}
-                  className="border border-[#00FF00]/50 px-2 py-1 text-[11px] uppercase tracking-wider text-neutral-200 transition-colors hover:bg-[#00FF00]/10 hover:text-[#00FF00]"
-                >
-                  {tag}
-                </span>
-              ))}
-            </div>
-          )}
-        </SidebarSection>
-
-        <SidebarSection
-          icon={<Package className="h-3.5 w-3.5" />}
-          title="Artifacts"
-        >
-          {loading ? (
-            <SkeletonRow />
-          ) : artifacts.length === 0 ? (
-            <p className="py-1 text-xs italic text-neutral-500">empty</p>
-          ) : (
-            <ul className="flex flex-col">
-              {artifacts.map((a) => (
-                <li
-                  key={a.id}
-                  className="group flex flex-col gap-1 border-b border-neutral-800 py-3 transition-colors hover:bg-[#00FF00]/5"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="flex items-center gap-2 text-sm text-neutral-200 group-hover:text-[#00FF00]">
-                      {a.is_curiosity_key && (
-                        <Key className="h-3.5 w-3.5 text-[#00FF00]" />
-                      )}
-                      {a.name}
-                    </span>
-                  </div>
-                  {a.description && (
-                    <p className="text-[11px] leading-snug text-neutral-500">
-                      {a.description}
-                    </p>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-        </SidebarSection>
+        {(!survived || beatTheGame) && (
+          <button
+            type="button"
+            onClick={onRestart}
+            className={`group flex items-center justify-center gap-3 border-2 px-6 py-4 font-mono text-sm uppercase tracking-[0.25em] transition-all duration-150 ${
+              survived
+                ? "border-[#00FF00] bg-[#00FF00]/[0.06] text-[#00FF00] hover:bg-[#00FF00]/20 hover:shadow-glow"
+                : "border-red-500 bg-red-500/[0.06] text-red-400 hover:bg-red-500/20"
+            }`}
+          >
+            <RotateCcw className="h-4 w-4 transition-transform duration-300 group-hover:-rotate-180" />
+            Start Over
+          </button>
+        )}
       </div>
-    </aside>
-  );
-}
-
-function SidebarSection({
-  icon,
-  title,
-  children,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section>
-      <header className="mb-3 flex items-center gap-2 border-b border-[#00FF00]/30 pb-2 text-[#00FF00]">
-        {icon}
-        <h2 className="text-[11px] uppercase tracking-[0.35em]">{title}</h2>
-      </header>
-      {children}
-    </section>
-  );
-}
-
-function SkeletonRow() {
-  return (
-    <div className="flex items-center gap-2 py-2 text-xs text-neutral-500">
-      <Loader2 className="h-3 w-3 animate-spin text-[#00FF00]" />
-      establishing link…
     </div>
   );
 }

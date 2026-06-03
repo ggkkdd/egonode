@@ -5,108 +5,38 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
 } from "react";
 import type { User } from "@supabase/supabase-js";
 import { getSupabase } from "@/lib/supabase/client";
-import type { Artifact, Player } from "@/lib/types";
+import type { Player, RunLog } from "@/lib/types";
 
 type PlayerContextValue = {
-  user: User | null;
-  player: Player | null;
-  artifacts: Artifact[];
-  loading: boolean;
+  /** Highest level the player has ever survived (0 if none / not connected). */
+  maxLevelReached: number;
+  /** True once Supabase is connected and a player row is loaded. */
+  ready: boolean;
+  /** Non-fatal Supabase message, surfaced as a small banner. Never blocks play. */
   error: string | null;
-  refresh: () => Promise<void>;
-  addArtifact: (
-    name: string,
-    description: string,
-    isCuriosityKey?: boolean
-  ) => Promise<Artifact | null>;
-  updateCognitiveTags: (add: string[], remove: string[]) => Promise<void>;
+  /**
+   * Persist one attempt: append to the `runs` log and, on a survival that beats
+   * the player's record, bump `max_level_reached`. Fully best-effort — any
+   * failure is swallowed so the game keeps running without a database.
+   */
+  recordRun: (run: RunLog) => Promise<void>;
 };
 
 const PlayerContext = createContext<PlayerContextValue | undefined>(undefined);
 
 export function PlayerProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
   const [player, setPlayer] = useState<Player | null>(null);
-  const [artifacts, setArtifacts] = useState<Artifact[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [maxLevelReached, setMaxLevelReached] = useState(0);
+  const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadPlayerData = useCallback(async (userId: string) => {
-    const supabase = getSupabase();
-
-    const [playerRes, artifactsRes] = await Promise.all([
-      supabase.from("players").select("*").eq("id", userId).maybeSingle(),
-      supabase
-        .from("artifacts")
-        .select("*")
-        .eq("player_id", userId)
-        .order("created_at", { ascending: true }),
-    ]);
-
-    if (playerRes.error) throw playerRes.error;
-    if (artifactsRes.error) throw artifactsRes.error;
-
-    setPlayer(playerRes.data as Player | null);
-    setArtifacts((artifactsRes.data as Artifact[] | null) ?? []);
-  }, []);
-
-  const refresh = useCallback(async () => {
-    if (!user) return;
-    await loadPlayerData(user.id);
-  }, [user, loadPlayerData]);
-
-  const addArtifact = useCallback(
-    async (name: string, description: string, isCuriosityKey = false) => {
-      if (!user) return null;
-      const supabase = getSupabase();
-      const { data, error: insertErr } = await supabase
-        .from("artifacts")
-        .insert({
-          player_id: user.id,
-          name,
-          description,
-          is_curiosity_key: isCuriosityKey,
-        })
-        .select()
-        .single();
-
-      if (insertErr) throw insertErr;
-      const inserted = data as Artifact;
-      setArtifacts((prev) => [...prev, inserted]);
-      return inserted;
-    },
-    [user]
-  );
-
-  const updateCognitiveTags = useCallback(
-    async (add: string[], remove: string[]) => {
-      if (!user || !player) return;
-      const next = Array.from(
-        new Set([
-          ...player.cognitive_tags.filter((t) => !remove.includes(t)),
-          ...add,
-        ])
-      );
-      if (
-        next.length === player.cognitive_tags.length &&
-        next.every((t) => player.cognitive_tags.includes(t))
-      ) {
-        return; // no change
-      }
-      const supabase = getSupabase();
-      const { error: updErr } = await supabase
-        .from("players")
-        .update({ cognitive_tags: next })
-        .eq("id", user.id);
-      if (updErr) throw updErr;
-      setPlayer({ ...player, cognitive_tags: next });
-    },
-    [user, player]
-  );
+  // Keep the live user id without forcing re-renders of consumers.
+  const userRef = useRef<User | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -114,9 +44,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
     async function init() {
       try {
-        // getSupabase() can throw synchronously if env vars are missing —
-        // keep it inside the try so the message reaches the sidebar banner
-        // instead of triggering React's generic error overlay.
+        // getSupabase() throws synchronously if env vars are missing — keep it
+        // inside the try so the message becomes a soft banner, not a crash.
         const supabase = getSupabase();
 
         const {
@@ -124,29 +53,41 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         } = await supabase.auth.getSession();
 
         let activeUser: User | null = session?.user ?? null;
-
         if (!activeUser) {
-          const { data, error: signInErr } = await supabase.auth.signInAnonymously();
+          const { data, error: signInErr } =
+            await supabase.auth.signInAnonymously();
           if (signInErr) throw signInErr;
           activeUser = data.user;
         }
 
         if (!mounted || !activeUser) return;
-        setUser(activeUser);
-        await loadPlayerData(activeUser.id);
+        userRef.current = activeUser;
 
-        const { data: sub } = supabase.auth.onAuthStateChange(
-          (_event, session) => {
-            setUser(session?.user ?? null);
-          }
-        );
+        const { data: row, error: playerErr } = await supabase
+          .from("players")
+          .select("id, username, max_level_reached, created_at")
+          .eq("id", activeUser.id)
+          .maybeSingle();
+        if (playerErr) throw playerErr;
+
+        if (!mounted) return;
+        if (row) {
+          const p = row as Player;
+          setPlayer(p);
+          setMaxLevelReached(p.max_level_reached ?? 0);
+        }
+        setReady(true);
+
+        const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
+          userRef.current = s?.user ?? null;
+        });
         subscription = sub.subscription;
       } catch (e) {
         if (!mounted) return;
-        const msg = e instanceof Error ? e.message : "Failed to initialize session";
+        const msg =
+          e instanceof Error ? e.message : "Could not connect to save data";
+        // Persistence is optional — record the reason but let the game play on.
         setError(msg);
-      } finally {
-        if (mounted) setLoading(false);
       }
     }
 
@@ -156,12 +97,46 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       mounted = false;
       subscription?.unsubscribe();
     };
-  }, [loadPlayerData]);
+  }, []);
+
+  const recordRun = useCallback(
+    async (run: RunLog) => {
+      const user = userRef.current;
+      if (!user) return; // No Supabase / not signed in — skip silently.
+
+      try {
+        const supabase = getSupabase();
+
+        const { error: insertErr } = await supabase.from("runs").insert({
+          player_id: user.id,
+          level: run.level,
+          scenario_title: run.scenarioTitle,
+          user_plan: run.userPlan,
+          outcome: run.outcome,
+        });
+        if (insertErr) throw insertErr;
+
+        if (run.outcome === "SURVIVED" && run.level > maxLevelReached) {
+          const { error: updErr } = await supabase
+            .from("players")
+            .update({ max_level_reached: run.level })
+            .eq("id", user.id);
+          if (updErr) throw updErr;
+          setMaxLevelReached(run.level);
+          setPlayer((prev) =>
+            prev ? { ...prev, max_level_reached: run.level } : prev
+          );
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Failed to save run";
+        setError(msg);
+      }
+    },
+    [maxLevelReached]
+  );
 
   return (
-    <PlayerContext.Provider
-      value={{ user, player, artifacts, loading, error, refresh, addArtifact, updateCognitiveTags }}
-    >
+    <PlayerContext.Provider value={{ maxLevelReached, ready, error, recordRun }}>
       {children}
     </PlayerContext.Provider>
   );

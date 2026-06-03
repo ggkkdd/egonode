@@ -3,8 +3,9 @@ import "./globals.css";
 import { Providers } from "./providers";
 
 export const metadata: Metadata = {
-  title: "Egonode",
-  description: "A minimalist node-based narrative experience.",
+  title: "EGO-NODE // Death by AI",
+  description:
+    "Face 10 levels of Armageddon. Type your survival plan. Let the AI Judge decide if you live or die.",
 };
 
 export default function RootLayout({

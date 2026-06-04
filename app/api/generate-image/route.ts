@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        prompt: `${prompt}, cinematic, minimalist, dark moody atmosphere, deep shadows, subtle green rim light`,
+        prompt: `${prompt}, cinematic, post-apocalyptic, dark moody atmosphere, deep shadows, gritty industrial, dust and embers, warm amber and rust rim light`,
         negative_prompt:
           "text, watermark, logo, signature, blurry, low quality, cartoonish",
         image_size: "landscape_16_9",

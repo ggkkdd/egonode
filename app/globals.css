@@ -4,37 +4,74 @@
 
 :root {
   --charcoal: #121212;
-  --accent-green: #00FF00;
+  --concrete: #1b1916;
+  --rust: #c2410c;
+  --amber: #f5a524;
 }
 
 html,
 body {
-  height: 100%;
+  min-height: 100%;
   background-color: var(--charcoal);
-  color: #e5e5e5;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color: #d6cfc4;
+  font-family: "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue",
+    Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
-  overflow: hidden;
+  /* Allow vertical scroll so a focused input on mobile can be scrolled clear of
+     the on-screen keyboard; suppress only horizontal overflow. */
+  overflow-x: hidden;
 }
 
 ::selection {
-  background: var(--accent-green);
-  color: var(--charcoal);
+  background: var(--amber);
+  color: #121212;
 }
 
-/* Subtle scanline texture to reinforce the terminal aesthetic */
+/* Condensed industrial display face for titles. Bahnschrift ships on Windows;
+   Arial Narrow / Oswald / system fallbacks elsewhere. */
+.font-display {
+  font-family: "Bahnschrift", "Arial Narrow", "Oswald", "Segoe UI", system-ui,
+    sans-serif;
+  letter-spacing: 0.04em;
+}
+
+/* Diagonal hazard tape — thin accent strips and dividers. */
+.hazard-stripes {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    var(--amber) 0,
+    var(--amber) 10px,
+    #121212 10px,
+    #121212 20px
+  );
+}
+
+/* Beveled "cut corner" for panels and buttons — a fabricated-metal feel. */
+.notch {
+  clip-path: polygon(
+    0 0,
+    calc(100% - 12px) 0,
+    100% 12px,
+    100% 100%,
+    12px 100%,
+    0 calc(100% - 12px)
+  );
+}
+
+/* Faint concrete grain overlay (replaces the old CRT scanlines). */
 .scanlines::before {
   content: "";
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: repeating-linear-gradient(
-    to bottom,
-    rgba(0, 0, 0, 0) 0px,
+  background-image: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0) 0,
     rgba(0, 0, 0, 0) 2px,
-    rgba(255, 255, 255, 0.015) 3px,
+    rgba(0, 0, 0, 0.13) 3px,
     rgba(0, 0, 0, 0) 4px
   );
+  mix-blend-mode: multiply;
   z-index: 5;
 }
 

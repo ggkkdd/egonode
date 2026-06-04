@@ -14,15 +14,16 @@ const config: Config = {
           edge: "#1c1c1c",
         },
         accent: {
-          green: "#00FF00",
-          dim: "#00cc00",
+          amber: "#f5a524",
+          rust: "#c2410c",
+          dim: "#9a3412",
         },
       },
       fontFamily: {
         mono: ["ui-monospace", "SFMono-Regular", "Menlo", "Monaco", "Consolas", "monospace"],
       },
       boxShadow: {
-        glow: "0 0 12px rgba(0, 255, 0, 0.35)",
+        glow: "0 0 14px rgba(245, 165, 36, 0.35)",
       },
     },
   },

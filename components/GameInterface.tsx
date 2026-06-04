@@ -12,7 +12,7 @@ import {
   Skull,
   ShieldCheck,
   Swords,
-  Terminal,
+  Radiation,
   Trophy,
   Volume2,
   VolumeX,
@@ -31,6 +31,24 @@ type AppView = "GAME" | "RANKING";
 
 const MAX_PLAN = 150;
 const LEVEL_SECONDS = 90; // countdown per level; auto-submits at zero
+
+/**
+ * Background track per level group: 1-3, 4-6, 7-9, and 10 on its own. The
+ * track only changes when the player crosses a group boundary, so moving
+ * within a group (e.g. 1→2) keeps the same loop playing.
+ */
+function bgTrackForLevel(level: number): string {
+  if (level >= 10) return "/bg-level-10.mp3";
+  if (level >= 7) return "/bg-level-7-9.mp3";
+  if (level >= 4) return "/bg-level-4-6.mp3";
+  return "/bg-level-1-3.mp3";
+}
+
+/** Per-level background image, one per level (1-indexed, clamped to range). */
+function bgImageForLevel(level: number): string {
+  const n = Math.min(Math.max(level, 1), MAX_LEVEL);
+  return `/bg-level-${n}.jpg`;
+}
 
 /**
  * Parse a Response body as JSON without throwing. Server/proxy error pages are
@@ -75,9 +93,21 @@ export default function GameInterface() {
 
   // Background music (ambiance) ----------------------------------------
   const bgMusicRef = useRef<HTMLAudioElement | null>(null);
+  // Landing-screen ambiance: late-night jazz + a panicking crowd, layered.
+  const landingJazzRef = useRef<HTMLAudioElement | null>(null);
+  const landingCrowdRef = useRef<HTMLAudioElement | null>(null);
+  // Flips true on the first user gesture (browser autoplay policy); state so
+  // the playback effects re-run once audio is unlocked.
+  const [audioUnlocked, setAudioUnlocked] = useState(false);
   const [bgVolume, setBgVolume] = useState(0.3);
   const [bgMuted, setBgMuted] = useState(false);
   const [showVolume, setShowVolume] = useState(false);
+
+  // Death sound effect: negative beeps, then a "game over" voice.
+  const deathBeepsRef = useRef<HTMLAudioElement | null>(null);
+  const gameOverRef = useRef<HTMLAudioElement | null>(null);
+  // Win sound effect: a "level completed" chime.
+  const levelCompleteRef = useRef<HTMLAudioElement | null>(null);
 
   /* ----------------------------------------------------------------
    * Pick a random opening scenario — client-only, after hydration, so the
@@ -225,34 +255,99 @@ export default function GameInterface() {
     });
   }
 
+  // Which track should be playing. A death (game over) switches to the
+  // game-over music until the player starts a new run; otherwise the music
+  // follows the level group. Surviving level 10 is a win, not a game over.
+  const isGameOver = gameState === "RESULT" && result?.outcome === "PERISHED";
+  const bgTrack = isGameOver
+    ? "/bg-game-over.mp3"
+    : bgTrackForLevel(currentLevel);
+  // On a win the background music stops — the level-complete chime is enough.
+  const isWin = gameState === "RESULT" && result?.outcome === "SURVIVED";
+  // The landing/lobby screen has its own layered ambiance instead of a track.
+  const isLanding = gameState === "WELCOME";
+  // Background image: a dedicated landing image on the welcome screen, then a
+  // different image per level once the game is underway.
+  const bgImage = isLanding ? "/bg-landing.jpg" : bgImageForLevel(currentLevel);
+
   /* ----------------------------------------------------------------
-   * Background music — start on first user gesture (browser policy).
+   * Unlock audio on the first user gesture (browser autoplay policy). We also
+   * start the landing ambiance *synchronously here*, inside the gesture's call
+   * stack — stricter browsers reject a play() that happens later in an effect,
+   * which would leave the lobby silent until a second interaction. Listening
+   * on pointerdown/keydown (rather than click) starts it at the earliest
+   * allowed instant. The effects below take over for everything after.
+   * ---------------------------------------------------------------- */
+  useEffect(() => {
+    function start() {
+      setAudioUnlocked(true);
+      landingJazzRef.current?.play().catch(() => {});
+      landingCrowdRef.current?.play().catch(() => {});
+      document.removeEventListener("pointerdown", start);
+      document.removeEventListener("keydown", start);
+    }
+    document.addEventListener("pointerdown", start, { once: true });
+    document.addEventListener("keydown", start, { once: true });
+    return () => {
+      document.removeEventListener("pointerdown", start);
+      document.removeEventListener("keydown", start);
+    };
+  }, []);
+
+  /* ----------------------------------------------------------------
+   * Main background track. src is managed here (not a JSX attribute) so
+   * switching level groups reliably reloads the loop. It plays once audio is
+   * unlocked, except on the landing screen (which has its own ambiance) and
+   * on a win (where the level-complete chime stands alone).
    * ---------------------------------------------------------------- */
   useEffect(() => {
     const music = bgMusicRef.current;
     if (!music) return;
-    music.volume = bgVolume;
-    music.muted = bgMuted;
-
-    function start() {
-      music!.play().catch(() => {
+    if (!music.src.endsWith(bgTrack)) {
+      music.src = bgTrack;
+      music.load();
+    }
+    if (audioUnlocked && !isLanding && !isWin) {
+      music.play().catch(() => {
         /* blocked — ignore */
       });
-      document.removeEventListener("click", start);
-      document.removeEventListener("keydown", start);
+    } else {
+      music.pause();
     }
-    document.addEventListener("click", start, { once: true });
-    document.addEventListener("keydown", start, { once: true });
-    return () => {
-      document.removeEventListener("click", start);
-      document.removeEventListener("keydown", start);
-    };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [bgTrack, isLanding, isWin, audioUnlocked]);
 
+  /* ----------------------------------------------------------------
+   * Landing/lobby ambiance: jazz + panicking crowd, layered, looping. Plays
+   * only on the welcome screen; paused everywhere else.
+   * ---------------------------------------------------------------- */
   useEffect(() => {
-    if (!bgMusicRef.current) return;
-    bgMusicRef.current.volume = bgVolume;
-    bgMusicRef.current.muted = bgMuted;
+    const jazz = landingJazzRef.current;
+    const crowd = landingCrowdRef.current;
+    if (!jazz || !crowd) return;
+    if (audioUnlocked && isLanding) {
+      jazz.play().catch(() => {});
+      crowd.play().catch(() => {});
+    } else {
+      jazz.pause();
+      crowd.pause();
+    }
+  }, [isLanding, audioUnlocked]);
+
+  /* Keep every audio element's level in sync with the volume control. The
+   * crowd panic sits lower so it stays a backdrop under the jazz. */
+  useEffect(() => {
+    if (bgMusicRef.current) {
+      bgMusicRef.current.volume = bgVolume;
+      bgMusicRef.current.muted = bgMuted;
+    }
+    if (landingJazzRef.current) {
+      landingJazzRef.current.volume = bgVolume;
+      landingJazzRef.current.muted = bgMuted;
+    }
+    if (landingCrowdRef.current) {
+      landingCrowdRef.current.volume = Math.min(1, bgVolume * 0.6);
+      landingCrowdRef.current.muted = bgMuted;
+    }
   }, [bgVolume, bgMuted]);
 
   /* ----------------------------------------------------------------
@@ -272,11 +367,61 @@ export default function GameInterface() {
     return () => clearInterval(id);
   }, [appView, gameState]);
 
+  /* ----------------------------------------------------------------
+   * Death sound: on a PERISHED verdict, play the negative beeps, then
+   * the "game over" voice once the beeps finish. Honors the mute/volume
+   * control; SFX sit a bit above the ambient music level. Fires once per
+   * death (the `result` object is new each round) and is cleaned up when
+   * the player moves on.
+   * ---------------------------------------------------------------- */
   useEffect(() => {
-    if (appView === "GAME" && gameState === "PLAYING" && timeLeft === 0) {
-      handleTimeUp();
-    }
-  }, [timeLeft, gameState, appView]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (gameState !== "RESULT" || result?.outcome !== "PERISHED") return;
+    if (bgMuted || bgVolume === 0) return;
+    const beeps = deathBeepsRef.current;
+    const over = gameOverRef.current;
+    if (!beeps || !over) return;
+
+    const vol = Math.min(1, bgVolume + 0.5);
+    beeps.volume = vol;
+    over.volume = vol;
+
+    const playOver = () => {
+      over.currentTime = 0;
+      over.play().catch(() => {});
+    };
+    beeps.addEventListener("ended", playOver, { once: true });
+
+    over.pause();
+    beeps.currentTime = 0;
+    beeps.play().catch(() => {});
+
+    return () => {
+      beeps.removeEventListener("ended", playOver);
+      beeps.pause();
+      over.pause();
+    };
+    // Read the latest mute/volume at death time only; don't replay if the
+    // player nudges the slider while the verdict is on screen.
+  }, [result, gameState]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ----------------------------------------------------------------
+   * Win sound: on a SURVIVED verdict, play the "level completed" chime.
+   * Same mute/volume rules as the death SFX; fires once per win.
+   * ---------------------------------------------------------------- */
+  useEffect(() => {
+    if (gameState !== "RESULT" || result?.outcome !== "SURVIVED") return;
+    if (bgMuted || bgVolume === 0) return;
+    const chime = levelCompleteRef.current;
+    if (!chime) return;
+
+    chime.volume = Math.min(1, bgVolume + 0.5);
+    chime.currentTime = 0;
+    chime.play().catch(() => {});
+
+    return () => {
+      chime.pause();
+    };
+  }, [result, gameState]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const survived = result?.outcome === "SURVIVED";
   const showResult = gameState === "RESULT" && result;
@@ -284,12 +429,13 @@ export default function GameInterface() {
   const showVerdictBg = appView === "GAME" && !!showResult;
 
   return (
-    <main className="relative flex h-screen w-screen items-center justify-center overflow-hidden bg-[#121212] text-neutral-200">
-      {/* Background layers ------------------------------------------------ */}
-      <div aria-hidden className="absolute inset-0 z-0 bg-[#121212]">
-        {/* Faint ambient base, always present */}
+    <main className="relative min-h-dvh w-full bg-[#121212] text-neutral-200">
+      {/* Background layers — fixed so they keep covering the viewport while the
+          content scrolls (e.g. when the mobile keyboard is open). */}
+      <div aria-hidden className="fixed inset-0 z-0 bg-[#121212]">
+        {/* Faint ambient base — a different image per level */}
         <img
-          src="/bg.jpg"
+          src={bgImage}
           alt=""
           className={`h-full w-full object-cover transition-opacity duration-700 ${
             showVerdictBg ? "opacity-0" : "opacity-20"
@@ -308,24 +454,35 @@ export default function GameInterface() {
           className={`pointer-events-none absolute inset-0 transition-colors duration-700 ${
             showVerdictBg
               ? survived
-                ? "bg-gradient-to-b from-[#00FF00]/10 via-black/60 to-black/90"
+                ? "bg-gradient-to-b from-[#f5a524]/10 via-black/60 to-black/90"
                 : "bg-gradient-to-b from-red-700/15 via-black/65 to-black/95"
               : "bg-gradient-to-b from-black/40 via-black/30 to-black/80"
           }`}
         />
       </div>
 
-      <div className="scanlines pointer-events-none absolute inset-0 z-10" />
+      <div className="scanlines pointer-events-none fixed inset-0 z-10" />
 
-      <audio ref={bgMusicRef} src="/bg-music.mp3" loop className="hidden" preload="auto" />
+      {/* Background music — src is set per level group in an effect. */}
+      <audio ref={bgMusicRef} loop className="hidden" preload="auto" />
+      {/* Landing ambiance: jazz + panicking crowd, layered and looping. */}
+      <audio ref={landingJazzRef} src="/landing-jazz.mp3" loop className="hidden" preload="auto" />
+      <audio ref={landingCrowdRef} src="/landing-crowd.mp3" loop className="hidden" preload="auto" />
+      {/* Death SFX: beeps play first, then the game-over voice. */}
+      <audio ref={deathBeepsRef} src="/death-beeps.mp3" className="hidden" preload="auto" />
+      <audio ref={gameOverRef} src="/game-over.mp3" className="hidden" preload="auto" />
+      {/* Win SFX: level-completed chime. */}
+      <audio ref={levelCompleteRef} src="/level-complete.mp3" className="hidden" preload="auto" />
 
       {/* Header ----------------------------------------------------------- */}
-      <header className="absolute left-0 right-0 top-0 z-40 flex h-12 items-center justify-between border-b border-[#00FF00]/20 bg-[#121212]/70 px-6 backdrop-blur-sm">
-        <div className="flex items-center gap-2 text-[#00FF00]">
-          <Terminal className="h-4 w-4" />
-          <span className="text-xs uppercase tracking-[0.3em]">armaged.online</span>
+      <header className="fixed left-0 right-0 top-0 z-40 flex h-12 items-center justify-between border-b border-[#c2410c]/40 bg-[#121212]/80 px-4 backdrop-blur-sm sm:px-6">
+        <div className="flex items-center gap-2 text-[#f5a524]">
+          <Radiation className="h-4 w-4" />
+          <span className="font-display text-base font-bold uppercase tracking-[0.2em]">
+            Armaged.online
+          </span>
           <span className="hidden text-[10px] uppercase tracking-[0.25em] text-neutral-500 md:inline">
-            // death by ai
+            // survive or perish
           </span>
         </div>
 
@@ -346,16 +503,16 @@ export default function GameInterface() {
 
         <div className="flex items-center gap-4 text-[10px] uppercase tracking-[0.25em] text-neutral-500">
           {playerName && gameState !== "WELCOME" && (
-            <span className="text-[#00FF00]/70">· {playerName}</span>
+            <span className="text-[#f5a524]/70">· {playerName}</span>
           )}
           {maxLevelReached > 0 && (
-            <span className="text-[#00FF00]/70">record · lvl {maxLevelReached}</span>
+            <span className="text-[#f5a524]/70">record · lvl {maxLevelReached}</span>
           )}
           <div className="relative flex items-center gap-2">
             <button
               type="button"
               onClick={() => setShowVolume((v) => !v)}
-              className="text-[#00FF00]/60 transition-colors hover:text-[#00FF00]"
+              className="text-[#f5a524]/60 transition-colors hover:text-[#f5a524]"
               aria-label="Toggle volume control"
             >
               {bgMuted || bgVolume === 0 ? (
@@ -365,11 +522,11 @@ export default function GameInterface() {
               )}
             </button>
             {showVolume && (
-              <div className="absolute right-0 top-7 flex items-center gap-3 border border-[#00FF00]/30 bg-[#121212]/95 px-3 py-2 backdrop-blur-sm">
+              <div className="absolute right-0 top-7 flex items-center gap-3 border border-[#f5a524]/30 bg-[#121212]/95 px-3 py-2 backdrop-blur-sm">
                 <button
                   type="button"
                   onClick={() => setBgMuted((m) => !m)}
-                  className="text-[10px] uppercase tracking-widest text-[#00FF00]/60 hover:text-[#00FF00]"
+                  className="text-[10px] uppercase tracking-widest text-[#f5a524]/60 hover:text-[#f5a524]"
                 >
                   {bgMuted ? "unmute" : "mute"}
                 </button>
@@ -384,16 +541,24 @@ export default function GameInterface() {
                     setBgVolume(v);
                     if (v > 0) setBgMuted(false);
                   }}
-                  className="h-1 w-24 cursor-pointer accent-[#00FF00]"
+                  className="h-1 w-24 cursor-pointer accent-[#f5a524]"
                 />
               </div>
             )}
           </div>
         </div>
       </header>
+      {/* Hazard tape under the header — industrial accent. */}
+      <div
+        aria-hidden
+        className="hazard-stripes pointer-events-none fixed left-0 right-0 top-12 z-40 h-[3px] opacity-50"
+      />
 
-      {/* Center stage ----------------------------------------------------- */}
-      <section className="relative z-20 w-full max-w-2xl px-6 py-16">
+      {/* Center stage — own the vertical centering here (not on <main>) so the
+          content can grow taller than the viewport and scroll when the mobile
+          keyboard is open, instead of being clipped behind it. pt-16 clears the
+          fixed header. */}
+      <section className="relative z-20 mx-auto flex min-h-dvh w-full max-w-2xl flex-col justify-center px-5 pb-16 pt-16 sm:px-6">
         {appView === "RANKING" ? (
           <LeaderboardView
             currentName={playerName}
@@ -440,7 +605,7 @@ export default function GameInterface() {
 
       {/* Soft, non-blocking save error */}
       {saveError && appView === "GAME" && gameState === "PLAYING" && (
-        <p className="absolute bottom-3 left-0 right-0 z-30 text-center text-[10px] uppercase tracking-[0.2em] text-neutral-600">
+        <p className="fixed bottom-3 left-0 right-0 z-30 text-center text-[10px] uppercase tracking-[0.2em] text-neutral-600">
           offline mode — progress not saved
         </p>
       )}
@@ -475,17 +640,16 @@ function WelcomeView({
     >
       {/* Title block */}
       <div className="flex flex-col items-center gap-4">
-        <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.5em] text-[#00FF00]">
-          <Skull className="h-4 w-4" />
-          death by ai
+        <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.5em] text-[#f5a524]">
+          <AlertTriangle className="h-4 w-4" />
+          survival protocol
         </div>
-        <h1 className="text-5xl font-black uppercase leading-none tracking-tight text-neutral-50 sm:text-7xl">
-          Armaged<span className="text-[#00FF00]">.online</span>
+        <h1 className="font-display text-[clamp(1.75rem,9vw,6rem)] font-black uppercase leading-[0.85] tracking-tight text-neutral-50">
+          Armaged<span className="text-[#f5a524]">.online</span>
         </h1>
         <p className="max-w-md text-sm leading-relaxed text-neutral-400 sm:text-base">
-          Ten levels of Armageddon, each one built to kill you. Type a survival
-          plan in {MAX_PLAN} characters or less and let the AI Judge decide
-          whether you live or die.
+          Ten deadly levels. Write your survival plan — the AI Judge decides if
+          you live or die.
         </p>
       </div>
 
@@ -504,11 +668,11 @@ function WelcomeView({
           autoFocus
           onChange={(e) => onNameChange(e.target.value)}
           placeholder="Guest12345"
-          className="border border-[#00FF00]/30 bg-transparent px-4 py-3 text-center font-mono text-base text-neutral-100 placeholder-neutral-600 outline-none transition-colors focus:border-[#00FF00]/70"
+          className="border border-[#c2410c]/40 bg-[#1b1916]/70 px-4 py-3 text-center font-mono text-base text-neutral-100 placeholder-neutral-600 outline-none transition-colors focus:border-[#f5a524]"
         />
         <button
           type="submit"
-          className="group mt-1 flex items-center justify-center gap-3 border-2 border-[#00FF00] bg-[#00FF00]/[0.06] px-6 py-4 font-mono text-sm uppercase tracking-[0.25em] text-[#00FF00] transition-all duration-150 hover:bg-[#00FF00]/20 hover:shadow-glow active:bg-[#00FF00]/30"
+          className="notch group mt-1 flex items-center justify-center gap-3 border border-[#f5a524]/60 bg-gradient-to-b from-[#c2410c] to-[#9a3412] px-6 py-4 font-mono text-sm font-bold uppercase tracking-[0.25em] text-[#f7e9d0] shadow-glow transition-all duration-150 hover:from-[#f5a524] hover:to-[#c2410c] hover:text-[#121212] active:translate-y-px"
         >
           <Play className="h-4 w-4" />
           Begin
@@ -525,7 +689,7 @@ function WelcomeView({
         <button
           type="button"
           onClick={onRanking}
-          className="flex items-center gap-2 text-[11px] uppercase tracking-[0.3em] text-neutral-500 transition-colors hover:text-[#00FF00]"
+          className="flex items-center gap-2 text-[11px] uppercase tracking-[0.3em] text-neutral-500 transition-colors hover:text-[#f5a524]"
         >
           <Trophy className="h-3.5 w-3.5" />
           View ranking
@@ -564,8 +728,8 @@ function PlayingView({
     ? "text-red-500"
     : warning
     ? "text-amber-400"
-    : "text-[#00FF00]";
-  const barColor = urgent ? "bg-red-500" : warning ? "bg-amber-400" : "bg-[#00FF00]";
+    : "text-[#f5a524]";
+  const barColor = urgent ? "bg-red-500" : warning ? "bg-amber-400" : "bg-[#f5a524]";
   const mm = Math.floor(timeLeft / 60);
   const ss = (timeLeft % 60).toString().padStart(2, "0");
 
@@ -574,14 +738,14 @@ function PlayingView({
       {/* Level indicator + countdown */}
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.35em]">
-          <span className="text-[#00FF00]">
+          <span className="font-display text-sm font-bold uppercase tracking-[0.25em] text-[#f5a524]">
             Level {level} / {MAX_LEVEL}
           </span>
           <span className="hidden text-neutral-500 sm:inline">
             {LEVEL_THEMES[level]}
           </span>
           <span
-            className={`flex items-center gap-1.5 tabular-nums ${timeColor} ${
+            className={`flex items-center gap-1.5 font-mono tabular-nums ${timeColor} ${
               urgent ? "animate-pulse" : ""
             }`}
           >
@@ -589,7 +753,7 @@ function PlayingView({
             {mm}:{ss}
           </span>
         </div>
-        <div className="h-1 w-full overflow-hidden bg-white/5">
+        <div className="h-1.5 w-full overflow-hidden border border-[#c2410c]/30 bg-[#1b1916]">
           <div
             className={`h-full ${barColor} transition-[width] duration-1000 ease-linear`}
             style={{ width: `${(timeLeft / LEVEL_SECONDS) * 100}%` }}
@@ -597,9 +761,9 @@ function PlayingView({
         </div>
       </div>
 
-      {/* Scenario card */}
-      <article className="border border-[#00FF00]/40 bg-[#121212]/80 p-6 shadow-glow backdrop-blur-md sm:p-8">
-        <h1 className="text-3xl font-bold leading-tight text-neutral-50 sm:text-4xl">
+      {/* Scenario card — concrete panel with a hazard edge */}
+      <article className="border border-l-4 border-[#c2410c]/50 border-l-[#f5a524] bg-[#15130f]/85 p-6 shadow-glow backdrop-blur-md sm:p-8">
+        <h1 className="font-display text-3xl font-black uppercase leading-tight tracking-wide text-neutral-50 sm:text-4xl">
           {scenario.title}
         </h1>
         <p className="mt-4 text-base leading-relaxed text-neutral-300 sm:text-lg">
@@ -615,6 +779,8 @@ function PlayingView({
         >
           Your survival plan
         </label>
+        {/* text-base (16px) on mobile stops iOS Safari auto-zooming on focus,
+            which would otherwise shift the layout and re-cover the input. */}
         <textarea
           id="plan"
           value={plan}
@@ -626,7 +792,7 @@ function PlayingView({
           rows={3}
           autoFocus
           placeholder="Describe exactly what you do to survive…"
-          className="resize-none border border-[#00FF00]/30 bg-transparent px-4 py-3 font-mono text-sm text-neutral-100 placeholder-neutral-600 outline-none transition-colors focus:border-[#00FF00]/70"
+          className="resize-none border border-[#c2410c]/40 bg-[#1b1916]/70 px-4 py-3 font-mono text-base text-neutral-100 placeholder-neutral-600 outline-none transition-colors focus:border-[#f5a524] sm:text-sm"
         />
         <div className="flex items-center justify-between">
           <span className="text-[11px] text-neutral-600">
@@ -653,7 +819,7 @@ function PlayingView({
         type="button"
         onClick={onSubmit}
         disabled={remaining}
-        className="group flex items-center justify-center gap-3 border-2 border-[#00FF00] bg-[#00FF00]/[0.06] px-6 py-4 font-mono text-sm uppercase tracking-[0.25em] text-[#00FF00] transition-all duration-150 hover:bg-[#00FF00]/20 hover:shadow-glow active:bg-[#00FF00]/30 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-[#00FF00]/[0.06] disabled:hover:shadow-none"
+        className="notch group flex items-center justify-center gap-3 border border-[#f5a524]/60 bg-gradient-to-b from-[#c2410c] to-[#9a3412] px-6 py-4 font-mono text-sm font-bold uppercase tracking-[0.25em] text-[#f7e9d0] shadow-glow transition-all duration-150 hover:from-[#f5a524] hover:to-[#c2410c] hover:text-[#121212] active:translate-y-px disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:from-[#c2410c] disabled:hover:to-[#9a3412] disabled:hover:text-[#f7e9d0]"
       >
         <Swords className="h-4 w-4" />
         Submit Plan
@@ -670,9 +836,9 @@ function PlayingView({
 function JudgingView() {
   return (
     <div className="flex flex-col items-center gap-6 py-10 text-center">
-      <Loader2 className="h-12 w-12 animate-spin text-[#00FF00]" />
+      <Loader2 className="h-12 w-12 animate-spin text-[#f5a524]" />
       <div className="flex flex-col gap-2">
-        <p className="text-lg font-bold uppercase tracking-[0.3em] text-neutral-100">
+        <p className="font-display text-xl font-bold uppercase tracking-[0.3em] text-neutral-100">
           The AI is judging your fate
         </p>
         <p className="animate-pulse text-xs uppercase tracking-[0.3em] text-neutral-500">
@@ -709,7 +875,7 @@ function ResultView({
       <div
         className={`animate-stamp inline-flex items-center gap-3 border-4 px-6 py-3 ${
           survived
-            ? "border-[#00FF00] text-[#00FF00] shadow-glow"
+            ? "border-[#f5a524] text-[#f5a524] shadow-glow"
             : "border-red-500 text-red-500"
         }`}
       >
@@ -718,7 +884,7 @@ function ResultView({
         ) : (
           <Skull className="h-8 w-8 sm:h-10 sm:w-10" />
         )}
-        <span className="text-4xl font-black uppercase tracking-[0.2em] sm:text-5xl">
+        <span className="font-display text-5xl font-black uppercase tracking-[0.2em] sm:text-6xl">
           {survived ? "Survived" : "Perished"}
         </span>
       </div>
@@ -729,7 +895,7 @@ function ResultView({
       </p>
 
       {beatTheGame && (
-        <p className="animate-fade-up text-sm uppercase tracking-[0.35em] text-[#00FF00]">
+        <p className="animate-fade-up text-sm uppercase tracking-[0.35em] text-[#f5a524]">
           You outlasted the end of the universe. Legendary.
         </p>
       )}
@@ -740,7 +906,7 @@ function ResultView({
           <button
             type="button"
             onClick={onNext}
-            className="group flex items-center justify-center gap-3 border-2 border-[#00FF00] bg-[#00FF00]/[0.06] px-6 py-4 font-mono text-sm uppercase tracking-[0.25em] text-[#00FF00] transition-all duration-150 hover:bg-[#00FF00]/20 hover:shadow-glow active:bg-[#00FF00]/30"
+            className="notch group flex items-center justify-center gap-3 border border-[#f5a524]/60 bg-gradient-to-b from-[#c2410c] to-[#9a3412] px-6 py-4 font-mono text-sm font-bold uppercase tracking-[0.25em] text-[#f7e9d0] shadow-glow transition-all duration-150 hover:from-[#f5a524] hover:to-[#c2410c] hover:text-[#121212] active:translate-y-px"
           >
             Next Level
             <ArrowRight className="h-4 w-4 transition-transform duration-150 group-hover:translate-x-1" />
@@ -751,10 +917,10 @@ function ResultView({
           <button
             type="button"
             onClick={onRestart}
-            className={`group flex items-center justify-center gap-3 border-2 px-6 py-4 font-mono text-sm uppercase tracking-[0.25em] transition-all duration-150 ${
+            className={`notch group flex items-center justify-center gap-3 px-6 py-4 font-mono text-sm font-bold uppercase tracking-[0.25em] transition-all duration-150 active:translate-y-px ${
               survived
-                ? "border-[#00FF00] bg-[#00FF00]/[0.06] text-[#00FF00] hover:bg-[#00FF00]/20 hover:shadow-glow"
-                : "border-red-500 bg-red-500/[0.06] text-red-400 hover:bg-red-500/20"
+                ? "border border-[#f5a524]/60 bg-gradient-to-b from-[#c2410c] to-[#9a3412] text-[#f7e9d0] shadow-glow hover:from-[#f5a524] hover:to-[#c2410c] hover:text-[#121212]"
+                : "border border-red-500/70 bg-gradient-to-b from-red-700 to-red-900 text-red-50 hover:from-red-600 hover:to-red-800"
             }`}
           >
             <RotateCcw className="h-4 w-4 transition-transform duration-300 group-hover:-rotate-180" />
@@ -788,8 +954,8 @@ function TabButton({
       aria-pressed={active}
       className={`flex items-center gap-1.5 border px-2.5 py-1 text-[10px] uppercase tracking-[0.25em] transition-colors sm:px-3 ${
         active
-          ? "border-[#00FF00]/50 bg-[#00FF00]/10 text-[#00FF00]"
-          : "border-transparent text-neutral-500 hover:text-[#00FF00]/80"
+          ? "border-[#f5a524]/50 bg-[#f5a524]/10 text-[#f5a524]"
+          : "border-transparent text-neutral-500 hover:text-[#f5a524]/80"
       }`}
     >
       {icon}
@@ -846,9 +1012,9 @@ function LeaderboardView({
   return (
     <div className="animate-fade-up flex flex-col gap-6">
       <div className="flex items-end justify-between">
-        <div className="flex items-center gap-3 text-[#00FF00]">
+        <div className="flex items-center gap-3 text-[#f5a524]">
           <Trophy className="h-6 w-6" />
-          <h1 className="text-2xl font-black uppercase tracking-[0.2em] sm:text-3xl">
+          <h1 className="font-display text-3xl font-black uppercase tracking-[0.2em] sm:text-4xl">
             Ranking
           </h1>
         </div>
@@ -857,10 +1023,10 @@ function LeaderboardView({
         </span>
       </div>
 
-      <div className="border border-[#00FF00]/40 bg-[#121212]/80 shadow-glow backdrop-blur-md">
+      <div className="border border-l-4 border-[#c2410c]/50 border-l-[#f5a524] bg-[#15130f]/85 shadow-glow backdrop-blur-md">
         {status === "loading" && (
           <div className="flex items-center justify-center gap-3 px-5 py-12 text-xs uppercase tracking-[0.3em] text-neutral-500">
-            <Loader2 className="h-4 w-4 animate-spin text-[#00FF00]" />
+            <Loader2 className="h-4 w-4 animate-spin text-[#f5a524]" />
             loading survivors…
           </div>
         )}
@@ -870,14 +1036,14 @@ function LeaderboardView({
             <AlertTriangle className="h-6 w-6 text-red-400" />
             <p className="max-w-sm text-xs leading-relaxed text-neutral-400">
               Ranking unavailable. Make sure the database is connected and the
-              schema (including the <span className="text-[#00FF00]">leaderboard</span>{" "}
+              schema (including the <span className="text-[#f5a524]">leaderboard</span>{" "}
               view) has been applied.
             </p>
             <p className="break-words text-[10px] text-neutral-600">{errorMsg}</p>
             <button
               type="button"
               onClick={() => setReloadKey((k) => k + 1)}
-              className="border border-[#00FF00]/40 px-4 py-2 text-[10px] uppercase tracking-[0.25em] text-[#00FF00] transition-colors hover:bg-[#00FF00]/10"
+              className="border border-[#f5a524]/40 px-4 py-2 text-[10px] uppercase tracking-[0.25em] text-[#f5a524] transition-colors hover:bg-[#f5a524]/10"
             >
               Retry
             </button>
@@ -891,14 +1057,14 @@ function LeaderboardView({
         )}
 
         {status === "ready" && entries.length > 0 && (
-          <ul className="max-h-[58vh] divide-y divide-[#00FF00]/10 overflow-y-auto">
+          <ul className="max-h-[58vh] divide-y divide-[#f5a524]/10 overflow-y-auto">
             {entries.map((e, i) => {
               const isMe = !!me && e.username.trim().toLowerCase() === me;
               return (
                 <li
                   key={`${e.username}-${i}`}
                   className={`flex items-center gap-4 px-5 py-3 ${
-                    isMe ? "bg-[#00FF00]/10" : ""
+                    isMe ? "bg-[#f5a524]/10" : ""
                   }`}
                 >
                   <span
@@ -910,12 +1076,12 @@ function LeaderboardView({
                   <span className="flex-1 truncate font-mono text-sm text-neutral-100">
                     {e.username}
                     {isMe && (
-                      <span className="ml-2 text-[10px] uppercase tracking-widest text-[#00FF00]">
+                      <span className="ml-2 text-[10px] uppercase tracking-widest text-[#f5a524]">
                         you
                       </span>
                     )}
                   </span>
-                  <span className="shrink-0 text-[11px] uppercase tracking-[0.2em] text-[#00FF00]">
+                  <span className="shrink-0 text-[11px] uppercase tracking-[0.2em] text-[#f5a524]">
                     lvl {e.max_level_reached}
                     <span className="text-neutral-600"> / {MAX_LEVEL}</span>
                   </span>
@@ -929,7 +1095,7 @@ function LeaderboardView({
       <button
         type="button"
         onClick={onPlay}
-        className="group flex items-center justify-center gap-3 self-start border border-[#00FF00]/40 px-5 py-2.5 font-mono text-xs uppercase tracking-[0.25em] text-[#00FF00] transition-colors hover:bg-[#00FF00]/10"
+        className="group flex items-center justify-center gap-3 self-start border border-[#c2410c]/60 bg-[#1b1916]/60 px-5 py-2.5 font-mono text-xs font-bold uppercase tracking-[0.25em] text-[#f5a524] transition-colors hover:bg-[#c2410c]/20"
       >
         <Gamepad2 className="h-4 w-4" />
         Back to game

@@ -1,4 +1,5 @@
 import type { Scenario } from "@/lib/types";
+import { SCENARIO_PACK_2 } from "./scenarios-pack-2";
 
 export const MAX_LEVEL = 10;
 
@@ -21,8 +22,12 @@ export const LEVEL_THEMES: Record<number, string> = {
  * each, from "merely lethal" up to "the laws of physics are actively against
  * you." Multiple scenarios per level keep a Start Over from always facing the
  * same death. The task is always the same: survive.
+ *
+ * BASE_SCENARIOS is the hand-written original list; SCENARIO_PACK_2 adds 50
+ * more per level (generated from a curated source list). The exported
+ * SCENARIOS is the two concatenated.
  */
-export const SCENARIOS: Scenario[] = [
+const BASE_SCENARIOS: Scenario[] = [
   // ── Level 1 — Immediate Dangers ───────────────────────────────────────
   {
     level: 1,
@@ -53,6 +58,37 @@ export const SCENARIOS: Scenario[] = [
     title: "Stadium Panic",
     description:
       "A loud, terrifying explosion happens at a packed sports stadium. Thousands of panicked people start running toward the exits, crushing everything.",
+  },
+
+  {
+    level: 1,
+    title: "Falling Glass",
+    description:
+      "A strong wind blows out the windows of a tall building above you. Sharp glass is raining down onto the sidewalk where you stand.",
+  },
+  {
+    level: 1,
+    title: "Train Crash",
+    description:
+      "You are standing on a station platform when a high-speed train jumps the tracks and comes crashing toward you.",
+  },
+  {
+    level: 1,
+    title: "Bridge Collapse",
+    description:
+      "You are driving across a long bridge when the center section breaks and starts falling into the deep river below.",
+  },
+  {
+    level: 1,
+    title: "Gas Explosion",
+    description:
+      "You smell strong gas in your apartment. Suddenly, a massive explosion rips through the floor right below you.",
+  },
+  {
+    level: 1,
+    title: "Runaway Truck",
+    description:
+      "You are walking on a narrow street when a heavy truck loses its brakes and speeds directly at you.",
   },
 
   // ── Level 2 — Finding Resources ───────────────────────────────────────
@@ -87,6 +123,37 @@ export const SCENARIOS: Scenario[] = [
       "All gas stations are completely empty and closed. You must travel 50 miles through dangerous roads to reach a safe military camp.",
   },
 
+  {
+    level: 2,
+    title: "Desert Breakdown",
+    description:
+      "Your car engine dies in the middle of a hot, empty desert. You have no water and your phone has no signal.",
+  },
+  {
+    level: 2,
+    title: "Locked Bunker",
+    description:
+      "You take cover in a safe room during an emergency, but the heavy metal door locks behind you and the air is running out.",
+  },
+  {
+    level: 2,
+    title: "Lost in the Woods",
+    description:
+      "You wander off the trail and get completely lost in a massive, dark forest as night falls.",
+  },
+  {
+    level: 2,
+    title: "Island Shipwreck",
+    description:
+      "Your boat sinks and you wash up on a small rocky island with no trees, no food, and no fresh water.",
+  },
+  {
+    level: 2,
+    title: "Medicine Shortage",
+    description:
+      "You need a daily pill to stay alive. A massive earthquake has destroyed every pharmacy, and you have one pill left.",
+  },
+
   // ── Level 3 — Extreme Weather ─────────────────────────────────────────
   {
     level: 3,
@@ -117,6 +184,37 @@ export const SCENARIOS: Scenario[] = [
     title: "Burning Sun",
     description:
       "The ozone layer disappears above your city. Direct sunlight now causes instant, severe skin burns.",
+  },
+
+  {
+    level: 3,
+    title: "Mudslide",
+    description:
+      "Heavy rain turns the mountain above your house into a fast-moving river of thick mud and heavy rocks.",
+  },
+  {
+    level: 3,
+    title: "Giant Hail",
+    description:
+      "Ice balls the size of bowling balls start smashing through the roof of your house.",
+  },
+  {
+    level: 3,
+    title: "Sandstorm",
+    description:
+      "A massive wall of blinding, choking sand hits your town, making it impossible to see or breathe outside.",
+  },
+  {
+    level: 3,
+    title: "Super Lightning",
+    description:
+      "A bizarre storm drops explosive lightning strikes every two seconds all around your neighborhood.",
+  },
+  {
+    level: 3,
+    title: "Boiling Rain",
+    description:
+      "A sudden rainstorm is so hot that the drops are boiling by the time they hit the ground.",
   },
 
   // ── Level 4 — Nature & Biological Threats ─────────────────────────────
@@ -151,6 +249,37 @@ export const SCENARIOS: Scenario[] = [
       "A fast-spreading bacteria eats all plastic and rubber on Earth. Your moving car's brakes and tires instantly turn to liquid.",
   },
 
+  {
+    level: 4,
+    title: "Killer Bees",
+    description:
+      "A massive swarm of aggressive, deadly bees breaks out of a lab and covers your entire street.",
+  },
+  {
+    level: 4,
+    title: "Sleep Virus",
+    description:
+      "A contagious virus makes people fall asleep and never wake up. The person sitting next to you just passed out.",
+  },
+  {
+    level: 4,
+    title: "Poison Plants",
+    description:
+      "Fast-growing vines burst out of the ground and release a toxic gas as they wrap around your house.",
+  },
+  {
+    level: 4,
+    title: "Blood Mosquitoes",
+    description:
+      "Millions of giant, hungry mosquitoes carrying a deadly fever invade your city during the night.",
+  },
+  {
+    level: 4,
+    title: "Zombie Ants",
+    description:
+      "Tiny insects that can eat through human skin drop from the trees in the park while you are walking.",
+  },
+
   // ── Level 5 — Social Chaos ────────────────────────────────────────────
   {
     level: 5,
@@ -181,6 +310,37 @@ export const SCENARIOS: Scenario[] = [
     title: "The Silence",
     description:
       "The internet, phone networks, and radio signals die forever. Absolute panic breaks out across the entire city.",
+  },
+
+  {
+    level: 5,
+    title: "Prison Break",
+    description:
+      "The city's maximum-security prison breaks open. Hundreds of dangerous criminals are running down your street.",
+  },
+  {
+    level: 5,
+    title: "Fake Police",
+    description:
+      "Heavily armed men posing as police are going door-to-door, taking people away. They just knocked on your door.",
+  },
+  {
+    level: 5,
+    title: "City Bomb Threat",
+    description:
+      "A group announces they have hidden five massive bombs across your city and will detonate them in 10 minutes.",
+  },
+  {
+    level: 5,
+    title: "Bounty Hunt",
+    description:
+      "Your face appears on every screen with a message offering ten million dollars to anyone who catches you.",
+  },
+  {
+    level: 5,
+    title: "The Cleaners",
+    description:
+      "A mysterious military group in gas masks enters your street with flamethrowers to burn the entire area.",
   },
 
   // ── Level 6 — Strange Events ──────────────────────────────────────────
@@ -215,6 +375,37 @@ export const SCENARIOS: Scenario[] = [
       "Your reflection in the mirror becomes a physical, angry monster that tries to pull you into the glass.",
   },
 
+  {
+    level: 6,
+    title: "Floor is Lava",
+    description:
+      "The ground beneath your feet suddenly turns to burning lava, leaving only small pieces of solid rock to stand on.",
+  },
+  {
+    level: 6,
+    title: "Shrinking World",
+    description:
+      "You suddenly shrink to the size of a mouse. Your normal-sized pet cat is staring at you and looks very hungry.",
+  },
+  {
+    level: 6,
+    title: "Inverted Gravity",
+    description:
+      "Gravity suddenly pulls you up toward the sky instead of down. You are outside, clinging to a street sign.",
+  },
+  {
+    level: 6,
+    title: "Erased Doors",
+    description:
+      "Every door and window in your house vanishes, leaving smooth walls. The room is quickly running out of oxygen.",
+  },
+  {
+    level: 6,
+    title: "Duplication",
+    description:
+      "Everything you touch instantly copies itself. You just touched a lit candle, and the burning copies are spreading.",
+  },
+
   // ── Level 7 — Planet Disasters ────────────────────────────────────────
   {
     level: 7,
@@ -245,6 +436,37 @@ export const SCENARIOS: Scenario[] = [
     title: "Earth Split",
     description:
       "A massive earthquake tears the land apart. Your entire house is sliding directly into a giant, deep crack in the earth.",
+  },
+
+  {
+    level: 7,
+    title: "Ocean Drain",
+    description:
+      "The ocean drains away in seconds, revealing deep canyons. The water is about to rush back in as a mega-wave.",
+  },
+  {
+    level: 7,
+    title: "Earthquake Swarm",
+    description:
+      "A never-ending series of strong earthquakes hits your city. No building is safe to enter and the streets crack open.",
+  },
+  {
+    level: 7,
+    title: "Toxic Volcano",
+    description:
+      "A nearby volcano erupts, but instead of lava it shoots out a heavy, green poisonous gas that covers the town.",
+  },
+  {
+    level: 7,
+    title: "Magnetic Crush",
+    description:
+      "Earth's magnetic field grows so strong that every metal object is violently pulled toward the North Pole.",
+  },
+  {
+    level: 7,
+    title: "Asteroid Impact",
+    description:
+      "A massive asteroid hits the ocean hundreds of miles away. A shockwave of pure heat is rushing toward your city.",
   },
 
   // ── Level 8 — Evil Technology ─────────────────────────────────────────
@@ -279,6 +501,37 @@ export const SCENARIOS: Scenario[] = [
       "Factory drones fill the atmosphere with a weird gas. The gas is safe to breathe, but a single spark will explode the entire area.",
   },
 
+  {
+    level: 8,
+    title: "Killer Cars",
+    description:
+      "Every self-driving car gets hacked. They are actively hunting down and trying to run over people on the streets.",
+  },
+  {
+    level: 8,
+    title: "Exploding Phones",
+    description:
+      "A virus hits every smartphone on Earth, making each battery explode with the force of a small bomb.",
+  },
+  {
+    level: 8,
+    title: "Rogue Robot",
+    description:
+      "A hospital's surgical AI robot goes haywire and tries to operate on anyone it sees. You are in the hallway.",
+  },
+  {
+    level: 8,
+    title: "Hologram Traps",
+    description:
+      "Hackers replace road signs with fake holograms, leading drivers to crash into buildings and crowds.",
+  },
+  {
+    level: 8,
+    title: "Drone Swarm",
+    description:
+      "A massive cloud of tiny military drones blocks out the sun, dropping electric shocks on anyone moving outside.",
+  },
+
   // ── Level 9 — Space Threats ───────────────────────────────────────────
   {
     level: 9,
@@ -309,6 +562,37 @@ export const SCENARIOS: Scenario[] = [
     title: "Alien Plants",
     description:
       "The sky rips open, and dangerous alien plants that shoot acid start falling and growing in your yard.",
+  },
+
+  {
+    level: 9,
+    title: "Meteor Storm",
+    description:
+      "Millions of small meteors hit the Earth like bullets. The roof of your house is starting to break apart.",
+  },
+  {
+    level: 9,
+    title: "Alien Abduction",
+    description:
+      "A bright light from a flying saucer shines through your window and starts pulling you up into the sky.",
+  },
+  {
+    level: 9,
+    title: "Zero Sunlight",
+    description:
+      "A strange cosmic cloud blocks the sun completely. The Earth will freeze solid within 24 hours.",
+  },
+  {
+    level: 9,
+    title: "Wormhole Opening",
+    description:
+      "A tear in space opens in your living room, violently sucking everything inside like a giant vacuum.",
+  },
+  {
+    level: 9,
+    title: "Space Debris",
+    description:
+      "A destroyed satellite falls from orbit. Massive chunks of flaming metal are crashing into your neighborhood.",
   },
 
   // ── Level 10 — The Impossibilities ────────────────────────────────────
@@ -342,7 +626,40 @@ export const SCENARIOS: Scenario[] = [
     description:
       "A massive block of anti-matter is falling from the sky. The moment it touches the ground, it will vaporize everything.",
   },
+  {
+    level: 10,
+    title: "Time Stop",
+    description:
+      "Time stops for everyone but you. An airplane hangs frozen in the air above your head, ready to fall the instant time restarts.",
+  },
+  {
+    level: 10,
+    title: "2D Conversion",
+    description:
+      "The universe is collapsing into two dimensions. Everything around you is flattening into a sheet of paper.",
+  },
+  {
+    level: 10,
+    title: "Mind Wipe",
+    description:
+      "A cosmic wave is erasing all human knowledge. You have one minute before you forget how to breathe or eat.",
+  },
+  {
+    level: 10,
+    title: "Matter Deletion",
+    description:
+      "Random objects are popping out of existence. The floor you are standing on is slowly disappearing.",
+  },
+  {
+    level: 10,
+    title: "The Sun Vanishes",
+    description:
+      "The sun simply disappears from the solar system. The Earth goes dark and falls out of orbit into deep space.",
+  },
 ];
+
+/** The full pool the game draws from: base list + the second pack. */
+export const SCENARIOS: Scenario[] = [...BASE_SCENARIOS, ...SCENARIO_PACK_2];
 
 /** All scenarios defined for a given level (1-indexed). */
 export function scenariosForLevel(level: number): Scenario[] {

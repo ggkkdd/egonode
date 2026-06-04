@@ -155,7 +155,26 @@ export default function GameInterface() {
     setResult(null);
     setImageUrl(null);
     setError(null);
+    // Reset the clock here (batched with gameState) so the new level's first
+    // render already has a full timer — otherwise a stale timeLeft===0 carried
+    // from a timed-out level would instantly fire handleTimeUp again.
+    setTimeLeft(LEVEL_SECONDS);
     setGameState("PLAYING");
+  }
+
+  /* ----------------------------------------------------------------
+   * Back to the landing/name screen (not straight into a new round) — used by
+   * the verdict screen's "Start Over". The name is kept so the player can
+   * just hit Begin again.
+   * ---------------------------------------------------------------- */
+  function goToWelcome() {
+    setCurrentLevel(1);
+    setCurrentScenario(randomScenario(1));
+    setPlan("");
+    setResult(null);
+    setImageUrl(null);
+    setError(null);
+    setGameState("WELCOME");
   }
 
   /* ----------------------------------------------------------------
@@ -229,9 +248,9 @@ export default function GameInterface() {
   }
 
   /* ----------------------------------------------------------------
-   * Time's up. An empty plan is an instant death (no AI call); anything
-   * the player has typed gets sent to the Judge, which decides whether
-   * it's a real plan or nonsense.
+   * Time's up. An empty plan is an instant game over (no AI call). But if the
+   * player managed to type anything — even a half-finished plan they didn't
+   * get to submit — it still goes to the Judge; a good plan saves them.
    * ---------------------------------------------------------------- */
   function handleTimeUp() {
     if (gameState !== "PLAYING") return;
@@ -367,6 +386,13 @@ export default function GameInterface() {
     return () => clearInterval(id);
   }, [appView, gameState]);
 
+  // When the countdown hits zero during a level, time is up.
+  useEffect(() => {
+    if (appView === "GAME" && gameState === "PLAYING" && timeLeft === 0) {
+      handleTimeUp();
+    }
+  }, [timeLeft, gameState, appView]); // eslint-disable-line react-hooks/exhaustive-deps
+
   /* ----------------------------------------------------------------
    * Death sound: on a PERISHED verdict, play the negative beeps, then
    * the "game over" voice once the beeps finish. Honors the mute/volume
@@ -475,8 +501,8 @@ export default function GameInterface() {
       <audio ref={levelCompleteRef} src="/level-complete.mp3" className="hidden" preload="auto" />
 
       {/* Header ----------------------------------------------------------- */}
-      <header className="fixed left-0 right-0 top-0 z-40 flex h-12 items-center justify-between border-b border-[#c2410c]/40 bg-[#121212]/80 px-4 backdrop-blur-sm sm:px-6">
-        <div className="flex items-center gap-2 text-[#f5a524]">
+      <header className="fixed left-0 right-0 top-0 z-40 grid h-12 grid-cols-[1fr_auto_1fr] items-center border-b border-[#c2410c]/40 bg-[#121212]/80 px-4 backdrop-blur-sm sm:px-6">
+        <div className="flex items-center gap-2 justify-self-start text-[#f5a524]">
           <Radiation className="h-4 w-4" />
           <span className="font-display text-base font-bold uppercase tracking-[0.2em]">
             Armaged.online
@@ -486,7 +512,7 @@ export default function GameInterface() {
           </span>
         </div>
 
-        <nav className="flex items-center gap-1">
+        <nav className="flex items-center gap-1 justify-self-center">
           <TabButton
             active={appView === "GAME"}
             onClick={() => setAppView("GAME")}
@@ -501,7 +527,7 @@ export default function GameInterface() {
           />
         </nav>
 
-        <div className="flex items-center gap-4 text-[10px] uppercase tracking-[0.25em] text-neutral-500">
+        <div className="flex items-center gap-4 justify-self-end text-[10px] uppercase tracking-[0.25em] text-neutral-500">
           {playerName && gameState !== "WELCOME" && (
             <span className="text-[#f5a524]/70">· {playerName}</span>
           )}
@@ -596,7 +622,7 @@ export default function GameInterface() {
                 level={currentLevel}
                 narrative={result.narrative}
                 onNext={() => goToLevel(currentLevel + 1)}
-                onRestart={() => goToLevel(1)}
+                onRestart={goToWelcome}
               />
             )}
           </>

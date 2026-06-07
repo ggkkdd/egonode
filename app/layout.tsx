@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { Providers } from "./providers";
+import InputGuard from "@/components/InputGuard";
 
 const SITE_URL = "https://armaged.online";
 const TITLE = "Armaged.online — Death by AI Survival Game";
@@ -121,6 +122,7 @@ export default function RootLayout({
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
         />
+        <InputGuard />
         <Providers>{children}</Providers>
       </body>
     </html>

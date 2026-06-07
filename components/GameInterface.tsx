@@ -13,6 +13,7 @@ import {
   ShieldCheck,
   Swords,
   Radiation,
+  Target,
   Trophy,
   Volume2,
   VolumeX,
@@ -561,12 +562,12 @@ export default function GameInterface() {
 
       {/* Header ----------------------------------------------------------- */}
       <header className="fixed left-0 right-0 top-0 z-40 grid h-12 grid-cols-[1fr_auto_1fr] items-center border-b border-[#c2410c]/40 bg-[#121212]/80 px-4 backdrop-blur-sm sm:px-6">
-        <div className="flex items-center gap-2 justify-self-start text-[#f5a524]">
-          <Radiation className="h-4 w-4" />
-          <span className="font-display text-base font-bold uppercase tracking-[0.2em]">
-            Armaged.online
+        <div className="flex min-w-0 items-center gap-2 justify-self-start text-[#f5a524]">
+          <Radiation className="h-4 w-4 shrink-0" />
+          <span className="font-display text-sm font-bold uppercase tracking-[0.15em] sm:text-base sm:tracking-[0.2em]">
+            Armaged<span className="text-neutral-500">.online</span>
           </span>
-          <span className="hidden text-[10px] uppercase tracking-[0.25em] text-neutral-500 md:inline">
+          <span className="hidden text-[10px] uppercase tracking-[0.25em] text-neutral-500 lg:inline">
             // survive or perish
           </span>
         </div>
@@ -586,15 +587,32 @@ export default function GameInterface() {
           />
         </nav>
 
-        <div className="flex items-center gap-4 justify-self-end text-[10px] uppercase tracking-[0.25em] text-neutral-500">
+        <div className="flex items-center gap-2 justify-self-end sm:gap-3">
+          {/* Player name — only where there's room to breathe (desktop). */}
           {playerName && gameState !== "WELCOME" && (
-            <span className="text-[#f5a524]/70">· {playerName}</span>
+            <span className="hidden max-w-[9rem] truncate text-[10px] uppercase tracking-[0.25em] text-neutral-400 lg:inline">
+              {playerName}
+            </span>
           )}
-          {gameState !== "WELCOME" && (
-            <span className="text-[#f5a524]/70">score · {runScore}</span>
-          )}
+          {/* Best score — secondary; hidden on the tightest screens. */}
           {bestScore > 0 && (
-            <span className="text-[#f5a524]/70">best · {bestScore}</span>
+            <span
+              title="Best score"
+              className="hidden items-center gap-1.5 border border-[#f5a524]/20 px-2 py-1 font-mono text-[11px] font-medium leading-none tabular-nums text-[#f5a524]/60 sm:inline-flex"
+            >
+              <Trophy className="h-3 w-3" />
+              {bestScore}
+            </span>
+          )}
+          {/* Live run score — the key stat, a HUD pill kept visible during play. */}
+          {gameState !== "WELCOME" && (
+            <span
+              title="Run score"
+              className="inline-flex items-center gap-1.5 border border-[#f5a524]/40 bg-[#f5a524]/10 px-2 py-1 font-mono text-[11px] font-bold leading-none tabular-nums text-[#f5a524]"
+            >
+              <Target className="h-3 w-3" />
+              {runScore}
+            </span>
           )}
           <div className="relative flex items-center gap-2">
             <button

@@ -490,15 +490,15 @@ export default function GameInterface() {
       <div className="scanlines pointer-events-none fixed inset-0 z-10" />
 
       {/* Background music — src is set per level group in an effect. */}
-      <audio ref={bgMusicRef} loop className="hidden" preload="auto" />
+      <audio ref={bgMusicRef} loop className="hidden" preload="none" />
       {/* Landing ambiance: jazz + panicking crowd, layered and looping. */}
-      <audio ref={landingJazzRef} src="/landing-jazz.mp3" loop className="hidden" preload="auto" />
-      <audio ref={landingCrowdRef} src="/landing-crowd.mp3" loop className="hidden" preload="auto" />
+      <audio ref={landingJazzRef} src="/landing-jazz.mp3" loop className="hidden" preload="none" />
+      <audio ref={landingCrowdRef} src="/landing-crowd.mp3" loop className="hidden" preload="none" />
       {/* Death SFX: beeps play first, then the game-over voice. */}
-      <audio ref={deathBeepsRef} src="/death-beeps.mp3" className="hidden" preload="auto" />
-      <audio ref={gameOverRef} src="/game-over.mp3" className="hidden" preload="auto" />
+      <audio ref={deathBeepsRef} src="/death-beeps.mp3" className="hidden" preload="none" />
+      <audio ref={gameOverRef} src="/game-over.mp3" className="hidden" preload="none" />
       {/* Win SFX: level-completed chime. */}
-      <audio ref={levelCompleteRef} src="/level-complete.mp3" className="hidden" preload="auto" />
+      <audio ref={levelCompleteRef} src="/level-complete.mp3" className="hidden" preload="none" />
 
       {/* Header ----------------------------------------------------------- */}
       <header className="fixed left-0 right-0 top-0 z-40 grid h-12 grid-cols-[1fr_auto_1fr] items-center border-b border-[#c2410c]/40 bg-[#121212]/80 px-4 backdrop-blur-sm sm:px-6">

@@ -1,0 +1,5 @@
+# Security contact for Armaged.online — see https://securitytxt.org / RFC 9116
+Contact: mailto:security@armaged.online
+Expires: 2027-06-04T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://armaged.online/.well-known/security.txt

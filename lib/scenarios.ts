@@ -658,17 +658,63 @@ const BASE_SCENARIOS: Scenario[] = [
   },
 ];
 
-/** The full pool the game draws from: base list + the second pack. */
-export const SCENARIOS: Scenario[] = [...BASE_SCENARIOS, ...SCENARIO_PACK_2];
+/**
+ * Drop any entry whose (level + title) was already seen, keeping the first.
+ * Base scenarios come first, so a hand-written original always wins over a
+ * pack duplicate. Also future-proofs against accidental repeats in the data.
+ */
+function dedupeByLevelTitle(list: Scenario[]): Scenario[] {
+  const seen = new Set<string>();
+  return list.filter((s) => {
+    const key = `${s.level}::${s.title.toLowerCase()}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** The full pool the game draws from: base list + the second pack, deduped. */
+export const SCENARIOS: Scenario[] = dedupeByLevelTitle([
+  ...BASE_SCENARIOS,
+  ...SCENARIO_PACK_2,
+]);
 
 /** All scenarios defined for a given level (1-indexed). */
 export function scenariosForLevel(level: number): Scenario[] {
   return SCENARIOS.filter((s) => s.level === level);
 }
 
+/* ----------------------------------------------------------------
+ * Anti-repeat selection ("shuffle bag")
+ *
+ * randomScenario used to pick with replacement — uniform, but it made the SAME
+ * scenario reappear far sooner than players expect (the birthday paradox: with
+ * ~60 per level a repeat is likely within ~10 picks, sooner still when a level
+ * is replayed after dying). Instead we deal from a per-level bag: every scenario
+ * in the level is shown once, in random order, before any repeat.
+ *
+ * State is module-level and client-only (randomScenario only runs after mount),
+ * so it lives for the browser session and resets on reload.
+ * ---------------------------------------------------------------- */
+
+/** In-progress shuffled queue per level; we pop() from the end as we deal. */
+const levelBags = new Map<number, Scenario[]>();
+/** Last scenario dealt per level, so a fresh bag never re-opens with it. */
+const lastDealt = new Map<number, Scenario>();
+
+/** Fisher–Yates shuffle in place; returns the same array for convenience. */
+function shuffleInPlace<T>(a: T[]): T[] {
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
 /**
- * Pick a random scenario for a level. Falls back to the last defined level
- * if an out-of-range level is somehow requested, so the UI never gets `null`.
+ * Pick a scenario for a level without repeating until the level's whole pool
+ * has been seen. Falls back to the last defined level if an out-of-range level
+ * is somehow requested, so the UI never gets `null`.
  */
 export function randomScenario(level: number): Scenario {
   const pool = scenariosForLevel(level);
@@ -676,5 +722,23 @@ export function randomScenario(level: number): Scenario {
     const top = scenariosForLevel(MAX_LEVEL);
     return top[Math.floor(Math.random() * top.length)];
   }
-  return pool[Math.floor(Math.random() * pool.length)];
+  if (pool.length === 1) return pool[0];
+
+  let bag = levelBags.get(level);
+  if (!bag || bag.length === 0) {
+    // Rebuild from a copy so the source pool is never mutated.
+    bag = shuffleInPlace([...pool]);
+    // Don't let the new bag open with the scenario we just showed (titles are
+    // unique within a level after dedup, so a title match means same scenario).
+    const prev = lastDealt.get(level);
+    if (prev && bag.length > 1 && bag[bag.length - 1].title === prev.title) {
+      const k = Math.floor(Math.random() * (bag.length - 1));
+      [bag[bag.length - 1], bag[k]] = [bag[k], bag[bag.length - 1]];
+    }
+    levelBags.set(level, bag);
+  }
+
+  const next = bag.pop()!;
+  lastDealt.set(level, next);
+  return next;
 }

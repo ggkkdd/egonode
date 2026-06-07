@@ -33,6 +33,29 @@ const MAX_PLAN = 150;
 const LEVEL_SECONDS = 90; // countdown per level; auto-submits at zero
 
 /**
+ * Points earned on one finished level.
+ *  - base:  the AI Judge's grade of the plan — 0 empty timeout, 1 nonsense,
+ *           2 a real attempt, 3 a close call, 5 survived.
+ *  - bonus: speed bonus, awarded ONLY on a survival, by how fast you answered.
+ *  - total: base + bonus.
+ */
+type LevelPoints = { base: number; bonus: number; total: number };
+
+/**
+ * Speed bonus, by how many SECONDS it took to answer (faster = more). Awarded
+ * only on a survival: under 10s → +6, under 20s → +5, … under 60s → +1, else 0.
+ */
+function speedBonus(elapsedSeconds: number): number {
+  if (elapsedSeconds < 10) return 6;
+  if (elapsedSeconds < 20) return 5;
+  if (elapsedSeconds < 30) return 4;
+  if (elapsedSeconds < 40) return 3;
+  if (elapsedSeconds < 50) return 2;
+  if (elapsedSeconds < 60) return 1;
+  return 0;
+}
+
+/**
  * Background track per level group: 1-3, 4-6, 7-9, and 10 on its own. The
  * track only changes when the player crosses a group boundary, so moving
  * within a group (e.g. 1→2) keeps the same loop playing.
@@ -73,7 +96,7 @@ function generateGuestName(): string {
 }
 
 export default function GameInterface() {
-  const { maxLevelReached, error: saveError, recordRun, saveUsername } =
+  const { maxLevelReached, bestScore, error: saveError, recordRun, saveUsername } =
     usePlayer();
 
   const [appView, setAppView] = useState<AppView>("GAME");
@@ -90,6 +113,10 @@ export default function GameInterface() {
   const [result, setResult] = useState<JudgeResult | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Cumulative points for the current playthrough, and the breakdown for the
+  // level just finished (shown on the verdict screen).
+  const [runScore, setRunScore] = useState(0);
+  const [lastPoints, setLastPoints] = useState<LevelPoints | null>(null);
 
   // Background music (ambiance) ----------------------------------------
   const bgMusicRef = useRef<HTMLAudioElement | null>(null);
@@ -116,7 +143,9 @@ export default function GameInterface() {
    * client-only, so reading it here avoids any hydration mismatch).
    * ---------------------------------------------------------------- */
   useEffect(() => {
-    setCurrentScenario(randomScenario(1));
+    // No scenario draw here: the WELCOME screen shows none, and beginGame ->
+    // goToLevel(1) draws the one that's actually played. Drawing here would just
+    // burn a card from the level-1 shuffle bag.
     let saved: string | null = null;
     try {
       saved = window.localStorage.getItem(NAME_STORAGE_KEY);
@@ -141,6 +170,8 @@ export default function GameInterface() {
       /* non-fatal — name just won't be remembered next visit */
     }
     void saveUsername(name); // best-effort Supabase persist
+    setRunScore(0); // fresh playthrough starts at zero
+    setLastPoints(null);
     goToLevel(1);
   }
 
@@ -169,11 +200,15 @@ export default function GameInterface() {
    * ---------------------------------------------------------------- */
   function goToWelcome() {
     setCurrentLevel(1);
-    setCurrentScenario(randomScenario(1));
+    // Deterministic placeholder (never shown on WELCOME); the real draw happens
+    // in goToLevel when the player hits Begin, so no shuffle-bag card is wasted.
+    setCurrentScenario(scenariosForLevel(1)[0]);
     setPlan("");
     setResult(null);
     setImageUrl(null);
     setError(null);
+    setRunScore(0);
+    setLastPoints(null);
     setGameState("WELCOME");
   }
 
@@ -183,6 +218,11 @@ export default function GameInterface() {
   async function submitPlan() {
     const trimmed = plan.trim();
     if (!trimmed || gameState === "JUDGING") return;
+
+    // How long the player took to answer, captured now (the timer is frozen
+    // during JUDGING, but we snapshot before any await to be safe). Drives the
+    // survival speed bonus. When the clock ran out this is the full 90s → no bonus.
+    const elapsed = LEVEL_SECONDS - timeLeft;
 
     setError(null);
     setImageUrl(null);
@@ -215,13 +255,26 @@ export default function GameInterface() {
       setResult(json);
       setGameState("RESULT");
 
-      // Persist analytics (best-effort, never blocks the UI).
-      void recordRun({
-        level: currentLevel,
-        scenarioTitle: currentScenario.title,
-        userPlan: trimmed,
-        outcome: json.outcome,
-      });
+      // Score it: the Judge's grade is the base; survivals add a speed bonus.
+      const survivedRun = json.outcome === "SURVIVED";
+      const base = json.score;
+      const bonus = survivedRun ? speedBonus(elapsed) : 0;
+      const total = base + bonus;
+      const newRunScore = runScore + total;
+      setLastPoints({ base, bonus, total });
+      setRunScore(newRunScore);
+
+      // Persist analytics + best score (best-effort, never blocks the UI).
+      void recordRun(
+        {
+          level: currentLevel,
+          scenarioTitle: currentScenario.title,
+          userPlan: trimmed,
+          outcome: json.outcome,
+          points: total,
+        },
+        newRunScore
+      );
 
       // Generate a background image for the verdict (best-effort).
       void fetchVerdictImage(json.image_prompt);
@@ -258,20 +311,26 @@ export default function GameInterface() {
       void submitPlan();
       return;
     }
-    // Froze — empty plan. Perish without bothering the Judge.
+    // Froze — empty plan. Perish without bothering the Judge. Zero points.
     setGameState("RESULT");
     setResult({
       outcome: "PERISHED",
+      score: 0,
       narrative:
         "The clock ran out and you just stood there, plan unwritten and mind blank. The disaster did not wait for you to think of something clever.",
       image_prompt: `A person frozen in panic, out of time, as ${currentScenario.title} destroys everything around them, cinematic and bleak`,
     });
-    void recordRun({
-      level: currentLevel,
-      scenarioTitle: currentScenario.title,
-      userPlan: "",
-      outcome: "PERISHED",
-    });
+    setLastPoints({ base: 0, bonus: 0, total: 0 });
+    void recordRun(
+      {
+        level: currentLevel,
+        scenarioTitle: currentScenario.title,
+        userPlan: "",
+        outcome: "PERISHED",
+        points: 0,
+      },
+      runScore
+    );
   }
 
   // Which track should be playing. A death (game over) switches to the
@@ -531,8 +590,11 @@ export default function GameInterface() {
           {playerName && gameState !== "WELCOME" && (
             <span className="text-[#f5a524]/70">· {playerName}</span>
           )}
-          {maxLevelReached > 0 && (
-            <span className="text-[#f5a524]/70">record · lvl {maxLevelReached}</span>
+          {gameState !== "WELCOME" && (
+            <span className="text-[#f5a524]/70">score · {runScore}</span>
+          )}
+          {bestScore > 0 && (
+            <span className="text-[#f5a524]/70">best · {bestScore}</span>
           )}
           <div className="relative flex items-center gap-2">
             <button
@@ -621,6 +683,8 @@ export default function GameInterface() {
                 survived={survived}
                 level={currentLevel}
                 narrative={result.narrative}
+                points={lastPoints}
+                runScore={runScore}
                 onNext={() => goToLevel(currentLevel + 1)}
                 onRestart={goToWelcome}
               />
@@ -883,17 +947,35 @@ function ResultView({
   survived,
   level,
   narrative,
+  points,
+  runScore,
   onNext,
   onRestart,
 }: {
   survived: boolean;
   level: number;
   narrative: string;
+  points: LevelPoints | null;
+  runScore: number;
   onNext: () => void;
   onRestart: () => void;
 }) {
   const hasNext = survived && level < MAX_LEVEL;
   const beatTheGame = survived && level >= MAX_LEVEL;
+
+  // Short label for the base grade the Judge gave this attempt.
+  const baseLabel =
+    points == null
+      ? ""
+      : points.base >= 5
+      ? "survived"
+      : points.base === 3
+      ? "close call"
+      : points.base === 2
+      ? "attempt"
+      : points.base === 1
+      ? "weak"
+      : "no plan";
 
   return (
     <div className="flex flex-col items-center gap-8 text-center">
@@ -924,6 +1006,31 @@ function ResultView({
         <p className="animate-fade-up text-sm uppercase tracking-[0.35em] text-[#f5a524]">
           You outlasted the end of the universe. Legendary.
         </p>
+      )}
+
+      {/* Points earned this level + running total */}
+      {points && (
+        <div className="animate-fade-up flex flex-col items-center gap-2">
+          <div className="flex items-baseline gap-2">
+            <span className="font-display text-4xl font-black text-[#f5a524] sm:text-5xl">
+              +{points.total}
+            </span>
+            <span className="text-[11px] uppercase tracking-[0.3em] text-neutral-400">
+              {points.total === 1 ? "point" : "points"}
+            </span>
+          </div>
+          <div className="flex items-center gap-3 font-mono text-[11px] uppercase tracking-[0.2em] text-neutral-500">
+            <span>
+              {baseLabel} · {points.base}
+            </span>
+            {points.bonus > 0 && (
+              <span className="text-[#f5a524]/80">speed +{points.bonus}</span>
+            )}
+          </div>
+          <span className="text-[11px] uppercase tracking-[0.3em] text-neutral-400">
+            run total · <span className="text-[#f5a524]">{runScore}</span>
+          </span>
+        </div>
       )}
 
       {/* Actions */}
@@ -1045,7 +1152,7 @@ function LeaderboardView({
           </h1>
         </div>
         <span className="text-[10px] uppercase tracking-[0.3em] text-neutral-500">
-          highest level reached
+          best score
         </span>
       </div>
 
@@ -1107,9 +1214,11 @@ function LeaderboardView({
                       </span>
                     )}
                   </span>
-                  <span className="shrink-0 text-[11px] uppercase tracking-[0.2em] text-[#f5a524]">
-                    lvl {e.max_level_reached}
-                    <span className="text-neutral-600"> / {MAX_LEVEL}</span>
+                  <span className="shrink-0 text-right text-[11px] uppercase tracking-[0.2em] text-[#f5a524]">
+                    {e.best_score} pts
+                    <span className="block text-[10px] text-neutral-600">
+                      lvl {e.max_level_reached} / {MAX_LEVEL}
+                    </span>
                   </span>
                 </li>
               );

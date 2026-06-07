@@ -22,12 +22,15 @@ create table if not exists public.players (
   id                 uuid primary key references auth.users(id) on delete cascade,
   username           text        not null,
   max_level_reached  integer     not null default 0,
+  best_score         integer     not null default 0,
   created_at         timestamptz not null default now()
 );
 
--- Upgrade older installs that predate this column.
+-- Upgrade older installs that predate these columns.
 alter table public.players
   add column if not exists max_level_reached integer not null default 0;
+alter table public.players
+  add column if not exists best_score integer not null default 0;
 
 -- ---------------------------------------------------------------------
 -- 2. runs — one row per submitted survival plan (analytics log)
@@ -39,8 +42,13 @@ create table if not exists public.runs (
   scenario_title  text,
   user_plan       text not null,
   outcome         text not null check (outcome in ('SURVIVED', 'PERISHED')),
+  points          integer not null default 0,
   created_at      timestamptz not null default now()
 );
+
+-- Upgrade older installs that predate this column.
+alter table public.runs
+  add column if not exists points integer not null default 0;
 
 create index if not exists runs_player_id_idx on public.runs(player_id);
 
@@ -97,13 +105,17 @@ create policy "runs_insert_own" on public.runs
 -- Public leaderboard
 -- ---------------------------------------------------------------------
 -- Players can only SELECT their own row (policy above), but the ranking
--- needs everyone's name + best level. This view exposes ONLY those two
--- non-sensitive columns. It runs with the owner's rights (the default,
+-- needs everyone's name + best score + best level. This view exposes ONLY
+-- those non-sensitive columns. It runs with the owner's rights (the default,
 -- i.e. NOT security_invoker), so it bypasses the per-row RLS on players
 -- while still leaking nothing else — no ids, no run plans.
-create or replace view public.leaderboard as
-  select username, max_level_reached
+-- Dropped first because CREATE OR REPLACE VIEW cannot insert a column before an
+-- existing one (best_score now sits ahead of max_level_reached), so replacing an
+-- older two-column view in place would error. Safe to re-run.
+drop view if exists public.leaderboard;
+create view public.leaderboard as
+  select username, best_score, max_level_reached
   from public.players
-  where max_level_reached > 0;
+  where best_score > 0;
 
 grant select on public.leaderboard to anon, authenticated;

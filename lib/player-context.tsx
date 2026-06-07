@@ -15,16 +15,20 @@ import type { Player, RunLog } from "@/lib/types";
 type PlayerContextValue = {
   /** Highest level the player has ever survived (0 if none / not connected). */
   maxLevelReached: number;
+  /** Best total points scored in a single run (0 if none / not connected). */
+  bestScore: number;
   /** True once Supabase is connected and a player row is loaded. */
   ready: boolean;
   /** Non-fatal Supabase message, surfaced as a small banner. Never blocks play. */
   error: string | null;
   /**
-   * Persist one attempt: append to the `runs` log and, on a survival that beats
-   * the player's record, bump `max_level_reached`. Fully best-effort — any
-   * failure is swallowed so the game keeps running without a database.
+   * Persist one attempt: append to the `runs` log and bump the player's records
+   * — `max_level_reached` on a survival past their best, and `best_score` when
+   * the current run total (`runTotal`) beats their stored best. Fully
+   * best-effort — any failure is swallowed so the game keeps running without a
+   * database.
    */
-  recordRun: (run: RunLog) => Promise<void>;
+  recordRun: (run: RunLog, runTotal: number) => Promise<void>;
   /** Save the player's chosen display name to `players.username`. Best-effort. */
   saveUsername: (name: string) => Promise<void>;
 };
@@ -34,6 +38,7 @@ const PlayerContext = createContext<PlayerContextValue | undefined>(undefined);
 export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const [player, setPlayer] = useState<Player | null>(null);
   const [maxLevelReached, setMaxLevelReached] = useState(0);
+  const [bestScore, setBestScore] = useState(0);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -67,7 +72,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
         const { data: row, error: playerErr } = await supabase
           .from("players")
-          .select("id, username, max_level_reached, created_at")
+          .select("id, username, max_level_reached, best_score, created_at")
           .eq("id", activeUser.id)
           .maybeSingle();
         if (playerErr) throw playerErr;
@@ -77,6 +82,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           const p = row as Player;
           setPlayer(p);
           setMaxLevelReached(p.max_level_reached ?? 0);
+          setBestScore(p.best_score ?? 0);
         }
         setReady(true);
 
@@ -102,7 +108,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const recordRun = useCallback(
-    async (run: RunLog) => {
+    async (run: RunLog, runTotal: number) => {
       const user = userRef.current;
       if (!user) return; // No Supabase / not signed in — skip silently.
 
@@ -115,26 +121,40 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
           scenario_title: run.scenarioTitle,
           user_plan: run.userPlan,
           outcome: run.outcome,
+          points: run.points,
         });
         if (insertErr) throw insertErr;
 
+        // Bump whichever records this attempt beats — best level (on a survival)
+        // and best run score — in a single players update.
+        const updates: { max_level_reached?: number; best_score?: number } = {};
         if (run.outcome === "SURVIVED" && run.level > maxLevelReached) {
+          updates.max_level_reached = run.level;
+        }
+        if (runTotal > bestScore) {
+          updates.best_score = runTotal;
+        }
+
+        if (Object.keys(updates).length > 0) {
           const { error: updErr } = await supabase
             .from("players")
-            .update({ max_level_reached: run.level })
+            .update(updates)
             .eq("id", user.id);
           if (updErr) throw updErr;
-          setMaxLevelReached(run.level);
-          setPlayer((prev) =>
-            prev ? { ...prev, max_level_reached: run.level } : prev
-          );
+          if (updates.max_level_reached !== undefined) {
+            setMaxLevelReached(updates.max_level_reached);
+          }
+          if (updates.best_score !== undefined) {
+            setBestScore(updates.best_score);
+          }
+          setPlayer((prev) => (prev ? { ...prev, ...updates } : prev));
         }
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Failed to save run";
         setError(msg);
       }
     },
-    [maxLevelReached]
+    [maxLevelReached, bestScore]
   );
 
   const saveUsername = useCallback(async (name: string) => {
@@ -158,7 +178,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <PlayerContext.Provider
-      value={{ maxLevelReached, ready, error, recordRun, saveUsername }}
+      value={{ maxLevelReached, bestScore, ready, error, recordRun, saveUsername }}
     >
       {children}
     </PlayerContext.Provider>
